@@ -1,0 +1,8 @@
+funcao soma(a: inteiro, b: inteiro): inteiro {
+    retorna a + b;
+}
+
+funcao principal(): inteiro {
+    variavel x: logico = verdadeiro;
+    retorna soma(x, 2); // deveria aceitar (logico -> inteiro)
+}

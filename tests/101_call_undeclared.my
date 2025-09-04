@@ -1,0 +1,3 @@
+funcao main(): inteiro {
+    retorna naoexiste(1,2,3);    // função não declarada
+}

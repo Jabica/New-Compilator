@@ -1,0 +1,4 @@
+funcao main(): inteiro {
+    variavel b: logico = !10;   // '!' exige logico
+    retorna 0;
+}

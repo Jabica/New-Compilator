@@ -1,0 +1,17 @@
+// duas funcoes + chamada com args
+funcao soma2(x: inteiro, y: inteiro): inteiro {
+  retorna x + y;
+}
+
+funcao eh_maior(a: inteiro, b: inteiro): logico {
+  retorna a > b;
+}
+
+funcao main(): inteiro {
+  variavel s: inteiro = soma2(10, 32);
+  se (eh_maior(s, 41)) {
+    retorna 1;
+  } senao {
+    retorna 0;
+  }
+}

@@ -1,0 +1,11 @@
+funcao foo(a: inteiro): inteiro {
+    se (a < 0) {
+        retorna 0;
+    } senao {
+        retorna 1;
+    }
+}
+
+funcao main(): inteiro {
+    retorna foo(3);
+}

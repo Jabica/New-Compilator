@@ -1,0 +1,8 @@
+funcao soma(a: inteiro, b: inteiro): inteiro {
+  retorne a + b;
+}
+
+funcao principal(): inteiro {
+  var z: inteiro = soma(1); // ERRO: faltou 1 argumento
+  retorne z;
+}

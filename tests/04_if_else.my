@@ -1,0 +1,9 @@
+// if/else basico
+funcao main(): inteiro {
+  variavel a: inteiro = 3;
+  se (a > 5) {
+    retorna 1;
+  } senao {
+    retorna 0;
+  }
+}

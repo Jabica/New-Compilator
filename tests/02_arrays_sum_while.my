@@ -1,0 +1,14 @@
+// testa declaracao de vetor 1D e atribuicoes por indexacao
+funcao main(): inteiro {
+  variavel n: inteiro = 4;
+  variavel v: inteiro[10];
+
+  v[0] = 10;
+  v[1] = 11;
+  v[2] = 12;
+  v[3] = 13;
+
+  // le e soma
+  variavel s: inteiro = v[0] + v[1] + v[2] + v[3];
+  retorna s;
+}

@@ -1,0 +1,5 @@
+funcao h(): inteiro {
+    variavel x: inteiro = 1;     // falta 'retorna' em todos os caminhos
+}
+
+funcao main(): inteiro { retorna 0; }

@@ -1,0 +1,5 @@
+funcao f(a: inteiro, b: logico): inteiro { retorna 0; }
+
+funcao main(): inteiro {
+    retorna f(verdadeiro, 10);   // tipos invertidos nos argumentos
+}

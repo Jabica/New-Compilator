@@ -1,0 +1,9 @@
+funcao k(a: inteiro): inteiro {
+    se (a > 0) {
+        retorna 1;
+    } senao {
+        variavel x: inteiro = 0; // else não retorna — falta retorno no fim
+    }
+}
+
+funcao main(): inteiro { retorna 0; }

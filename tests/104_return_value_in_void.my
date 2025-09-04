@@ -1,0 +1,5 @@
+funcao v(): vazio {
+    retorna 123;                 // retorno com valor em função 'vazio'
+}
+
+funcao main(): inteiro { retorna 0; }

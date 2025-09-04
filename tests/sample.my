@@ -1,0 +1,4 @@
+funcao principal(): inteiro {
+    variavel x: inteiro = 5;
+    retorna x;
+}

@@ -1,0 +1,9 @@
+funcao f(a: inteiro, b: logico): inteiro {
+    se (b) { retorna a; } senao { retorna 0; }
+}
+
+funcao main(): inteiro {
+    variavel x: logico = verdadeiro;
+    // int <- bool e bool <- int (conversões implícitas aceitas)
+    retorna f(x, 1);
+}

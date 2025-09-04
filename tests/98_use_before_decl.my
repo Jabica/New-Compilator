@@ -1,0 +1,5 @@
+funcao main(): inteiro {
+    variavel y: inteiro = x;     // uso antes da declaração
+    variavel x: inteiro = 3;
+    retorna 0;
+}

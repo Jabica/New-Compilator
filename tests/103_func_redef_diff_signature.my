@@ -1,0 +1,4 @@
+funcao g(a: inteiro): inteiro { retorna a; }
+funcao g(a: logico): inteiro { retorna 0; }  // redef com assinatura diferente (deve falhar)
+
+funcao main(): inteiro { retorna 0; }

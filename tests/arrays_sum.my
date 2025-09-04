@@ -1,0 +1,21 @@
+// Teste de soma de arrays com loop
+// Esperado: principal() retorna 15
+
+funcao principal(): inteiro {
+    variavel v: inteiro[5];
+    v[0] = 1;
+    v[1] = 2;
+    v[2] = 3;
+    v[3] = 4;
+    v[4] = 5;
+
+    variavel i: inteiro = 0;
+    variavel s: inteiro = 0;
+
+    enquanto (i < 5) {
+        s = s + v[i];
+        i = i + 1;
+    }
+
+    retorna s; // deve retornar 15
+}

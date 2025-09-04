@@ -1,0 +1,8 @@
+funcao ident(a: inteiro): inteiro {
+  retorne a;
+}
+
+funcao principal(): inteiro {
+  var z: inteiro = ident( (2 < 3) ); // ERRO: passando logico onde espera inteiro
+  retorne z;
+}

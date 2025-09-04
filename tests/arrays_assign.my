@@ -1,0 +1,14 @@
+// Teste de atribuição em arrays
+// Esperado: principal() retorna 42
+
+funcao principal(): inteiro {
+    variavel v: inteiro[3];
+    v[0] = 10;
+    v[1] = 20;
+    v[2] = 30;
+
+    // sobrescreve a posição 1
+    v[1] = 42;
+
+    retorna v[1]; // deve retornar 42
+}

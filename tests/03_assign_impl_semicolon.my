@@ -1,0 +1,8 @@
+// valida atribuicao com ';' implicito em contexto seguro
+funcao main(): inteiro {
+  variavel x: inteiro = 0;
+  x = 1         // ; implicito (proximo token inicia novo statement)
+  variavel y: inteiro = 2;
+  x = x + y     // ; implicito novamente
+  retorna x;
+}

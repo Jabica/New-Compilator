@@ -1,0 +1,10 @@
+funcao soma(a: inteiro, b: inteiro): inteiro {
+  retorne a + b;
+}
+
+funcao principal(): inteiro {
+  var x: inteiro = 5;
+  var y: inteiro = 7;
+  var z: inteiro = soma(x, y);
+  retorne z; // 12
+}

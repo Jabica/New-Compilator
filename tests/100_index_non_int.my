@@ -1,0 +1,6 @@
+funcao main(): inteiro {
+    variavel v: inteiro = 0;
+    variavel i: logico = falso;
+    v[i] = 3;                    // índice deve ser inteiro
+    retorna 0;
+}

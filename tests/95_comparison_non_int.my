@@ -1,0 +1,7 @@
+funcao main(): inteiro {
+    variavel b: logico = verdadeiro;
+    se (b < b) {                 // comparação exige inteiros
+        retorna 0;
+    }
+    retorna 0;
+}

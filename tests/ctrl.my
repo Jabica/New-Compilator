@@ -1,0 +1,13 @@
+funcao principal(): inteiro {
+    variavel x: inteiro = 3;
+    se (x < 5) {
+        x = x + 1;
+    } senao {
+        x = x - 1;
+    }
+
+    enquanto (x < 7) {
+        x = x + 2;
+    }
+    retorna x;
+}

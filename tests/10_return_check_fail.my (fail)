@@ -1,0 +1,3 @@
+funcao foo(): inteiro {
+    variavel x: inteiro = 2;
+} // erro: falta retorno

@@ -1,0 +1,14 @@
+funcao principal(): inteiro {
+    variavel v: inteiro[3];
+    v[0] = 10;
+    v[1] = 20;
+    v[2] = 30;
+
+    variavel s: inteiro = 0;
+    variavel i: inteiro = 0;
+    enquanto (i < 3) {
+        s = s + v[i];
+        i = i + 1;
+    }
+    retorna s; // esperado 60
+}

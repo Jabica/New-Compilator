@@ -1,0 +1,7 @@
+// garante precedencia: * / % > + -
+funcao main(): inteiro {
+  variavel x: inteiro = 2 + 3 * 4;      // 14
+  variavel y: inteiro = (2 + 3) * 4;    // 20
+  variavel z: inteiro = 10 - 6 / 3;     // 8
+  retorna x + y + z;
+}

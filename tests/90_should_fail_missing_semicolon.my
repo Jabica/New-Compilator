@@ -1,0 +1,6 @@
+// falta ';' real (nao contexto seguro)
+funcao main(): inteiro {
+  variavel x: inteiro = 0
+  x = 1 + 2;
+  retorna x;
+}

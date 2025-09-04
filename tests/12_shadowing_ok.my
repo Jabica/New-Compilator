@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+    variavel x: inteiro = 1;
+    {
+        variavel x: inteiro = 2;  // sombra em escopo interno é ok
+        x = x + 1;
+    }
+    retorna 0;
+}

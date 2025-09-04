@@ -1,0 +1,13 @@
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/intrinsics_gen.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/vt_gen.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/omp_gen.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/acc_gen.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/target_parser_gen.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/mycc.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/mycc_cli.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/edit_cache.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/rebuild_cache.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/list_install_components.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/install.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/install/local.dir
+/Users/jabour/VSCODE/New Compilator/build/CMakeFiles/install/strip.dir

@@ -1,0 +1,7 @@
+funcao soma(a: inteiro, b: inteiro): inteiro {
+    retorna a + b;
+}
+
+funcao principal(): inteiro {
+    retorna soma(1); // erro: aridade incorreta
+}

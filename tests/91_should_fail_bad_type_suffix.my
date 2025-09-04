@@ -1,0 +1,5 @@
+// erro em sufixo de tipo: '[ verdadeiro ]' ao inves de literal inteiro
+funcao main(): inteiro {
+  variavel a: inteiro[verdadeiro];
+  retorna 0;
+}

@@ -1,0 +1,4 @@
+funcao main(): inteiro {
+    x = 10;                      // 'x' não declarado
+    retorna 0;
+}

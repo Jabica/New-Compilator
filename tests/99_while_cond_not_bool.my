@@ -1,0 +1,6 @@
+funcao main(): inteiro {
+    enquanto (1) {               // condição deve ser logico
+        retorna 0;
+    }
+    retorna 0;
+}

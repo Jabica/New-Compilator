@@ -1,0 +1,8 @@
+funcao soma(a: inteiro, b: inteiro): inteiro {
+  retorna a + b;
+}
+
+funcao principal(): inteiro {
+  variavel x: inteiro = soma(2, 3);
+  retorna x;
+}

@@ -1,0 +1,5 @@
+funcao main(): inteiro {
+    variavel x: inteiro = 1;
+    variavel x: inteiro = 2;     // redeclaração no mesmo escopo
+    retorna 0;
+}

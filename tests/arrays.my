@@ -1,0 +1,28 @@
+
+
+// Teste básico de ARRAYS para o mycc
+// Objetivo: exercitar tipo inteiro[ N ], indexação v[i], atribuições e laço.
+// Resultado esperado: principal() retorna 15.
+
+funcao principal(): inteiro {
+    // declara um vetor de 5 inteiros
+    variavel v: inteiro[5];
+
+    // inicializações por índice
+    v[0] = 1;
+    v[1] = 2;
+    v[2] = 3;
+    v[3] = 4;
+    v[4] = 5;
+
+    variavel i: inteiro = 0;
+    variavel s: inteiro = 0;
+
+    // soma todos os elementos
+    enquanto (i < 5) {
+        s = s + v[i];
+        i = i + 1;
+    }
+
+    retorna s; // deve ser 15
+}

@@ -1,0 +1,5 @@
+funcao main(): inteiro {
+    variavel a: inteiro = -5;
+    variavel b: logico = !falso;
+    retorna 0;
+}

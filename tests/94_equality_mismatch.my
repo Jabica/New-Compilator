@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+    variavel a: inteiro = 1;
+    variavel b: logico = verdadeiro;
+    se (a == b) {                // igualdade entre tipos diferentes
+        retorna 0;
+    }
+    retorna 0;
+}
