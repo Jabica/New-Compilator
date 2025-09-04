@@ -11,6 +11,7 @@ Codegen::Codegen(std::string moduleName, Diag& d)
     : diag(d) {
     mod = std::make_unique<llvm::Module>(moduleName, ctx);
     builder = std::make_unique<llvm::IRBuilder<>>(ctx);
+    seedBuiltins();
 }
 
 std::unique_ptr<llvm::Module> Codegen::run(Program* p) {
@@ -30,6 +31,45 @@ llvm::Type* Codegen::ty(const mycc::Type& t) {
 }
 
 // ------------------------------------------------------------
+void Codegen::seedBuiltins() {
+    // void printi(i32)
+    auto *FTi = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                        { llvm::Type::getInt32Ty(ctx) }, false);
+    if (!mod->getFunction("printi"))
+        llvm::Function::Create(FTi, llvm::Function::ExternalLinkage, "printi", mod.get());
+
+    // void printb(i1)
+    auto *FTb = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                        { llvm::Type::getInt1Ty(ctx) }, false);
+    if (!mod->getFunction("printb"))
+        llvm::Function::Create(FTb, llvm::Function::ExternalLinkage, "printb", mod.get());
+}
+
+llvm::Value* Codegen::toBool(llvm::Value* v) {
+    if (v->getType()->isIntegerTy(1)) return v;
+    return builder->CreateICmpNE(v, llvm::ConstantInt::get(v->getType(), 0), "tobool");
+}
+
+llvm::Value* Codegen::toInt32(llvm::Value* v) {
+    if (v->getType()->isIntegerTy(32)) return v;
+    if (v->getType()->isIntegerTy(1))  return builder->CreateZExt(v, llvm::Type::getInt32Ty(ctx), "b2i32");
+    if (v->getType()->isIntegerTy())   return builder->CreateZExtOrTrunc(v, llvm::Type::getInt32Ty(ctx), "iN2i32");
+    return v;
+}
+
+llvm::Value* Codegen::castForParam(llvm::Value* v, llvm::Type* paramTy) {
+    if (paramTy->isIntegerTy(1))  return toBool(v);
+    if (paramTy->isIntegerTy(32)) return toInt32(v);
+    return v;
+}
+
+llvm::Value* Codegen::castForReturn(llvm::Value* v, llvm::Type* retTy) {
+    if (retTy->isVoidTy()) return nullptr;
+    if (retTy->isIntegerTy(1))  return toBool(v);
+    if (retTy->isIntegerTy(32)) return toInt32(v);
+    return v;
+}
+
 Function* Codegen::emitFuncDecl(FuncDecl* f) {
     std::vector<llvm::Type*> params;
     params.reserve(f->params.size());
@@ -180,12 +220,17 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
     if (auto r = dynamic_cast<ReturnStmt*>(s)) {
         if (r->value) {
             auto* val = emitExpr(r->value.get(), scope);
+            auto* F = builder->GetInsertBlock()->getParent();
+            val = castForReturn(val, F->getFunctionType()->getReturnType());
             builder->CreateRet(val);
         } else {
             builder->CreateRetVoid();
         }
         return;
     }
+
+    if (auto iff = dynamic_cast<IfStmt*>(s)) { emitIf(iff, scope); return; }
+    if (auto wh  = dynamic_cast<WhileStmt*>(s)) { emitWhile(wh, scope); return; }
 
     if (auto blk = dynamic_cast<Block*>(s)) {
         emitBlock(blk, scope);
@@ -237,10 +282,7 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
         for (size_t i = 0; i < c->args.size(); ++i) {
             llvm::Value* v = emitExpr(c->args[i].get(), scope);
             if (i < FT->getNumParams()) {
-                llvm::Type* PT = FT->getParamType((unsigned)i);
-                if (v->getType() != PT && PT->isIntegerTy() && v->getType()->isIntegerTy()) {
-                    v = builder->CreateZExtOrTrunc(v, PT);
-                }
+                v = castForParam(v, FT->getParamType((unsigned)i));
             }
             argsV.push_back(v);
         }
@@ -320,6 +362,53 @@ Value* Codegen::emitBinary(Binary* b, Scope& scope) {
 
     if (cmp) return builder->CreateZExt(cmp, llvm::Type::getInt32Ty(ctx), "bool2i32");
     return L;
+}
+
+void Codegen::emitIf(IfStmt* s, Scope& scope) {
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+
+    auto* thenBB  = llvm::BasicBlock::Create(ctx, "if.then", F);
+    auto* elseBB  = llvm::BasicBlock::Create(ctx, "if.else");
+    auto* mergeBB = llvm::BasicBlock::Create(ctx, "if.end");
+
+    llvm::Value* cond = toBool(emitExpr(s->cond.get(), scope));
+    builder->CreateCondBr(cond, thenBB, s->elseBlk ? elseBB : mergeBB);
+
+    builder->SetInsertPoint(thenBB);
+    emitBlock(s->thenBlk.get(), scope);
+    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(mergeBB);
+
+    if (s->elseBlk) {
+        F->insert(F->end(), elseBB);
+        builder->SetInsertPoint(elseBB);
+        emitBlock(s->elseBlk.get(), scope);
+        if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(mergeBB);
+    }
+
+    F->insert(F->end(), mergeBB);
+    builder->SetInsertPoint(mergeBB);
+}
+
+void Codegen::emitWhile(WhileStmt* s, Scope& scope) {
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+
+    auto* condBB = llvm::BasicBlock::Create(ctx, "while.cond", F);
+    auto* bodyBB = llvm::BasicBlock::Create(ctx, "while.body");
+    auto* endBB  = llvm::BasicBlock::Create(ctx, "while.end");
+
+    builder->CreateBr(condBB);
+
+    builder->SetInsertPoint(condBB);
+    llvm::Value* cond = toBool(emitExpr(s->cond.get(), scope));
+    builder->CreateCondBr(cond, bodyBB, endBB);
+
+    F->insert(F->end(), bodyBB);
+    builder->SetInsertPoint(bodyBB);
+    emitBlock(s->body.get(), scope);
+    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(condBB);
+
+    F->insert(F->end(), endBB);
+    builder->SetInsertPoint(endBB);
 }
 
 } // namespace mycc

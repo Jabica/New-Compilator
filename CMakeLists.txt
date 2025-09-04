@@ -3,7 +3,7 @@ project(mycc-pt VERSION 0.1 LANGUAGES C CXX)
 
 # Evita os warnings de "newer macOS version"
 # (coloque a versão do seu sistema; pelos logs parece 14.4)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "14.4")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -27,6 +27,7 @@ add_library(mycc STATIC
     src/lexer.cpp
     src/parser.cpp
     src/codegen.cpp
+    src/diagnostics.cpp
     # se houver .cpp de ast/diagnostics/token, adicione-os aqui:
     # src/ast.cpp
     # src/diagnostics.cpp

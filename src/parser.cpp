@@ -239,7 +239,7 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
     }
 
     // fallback mínimo
-    diag.warning(peek().line, peek().col, "comando nao suportado ainda; ignorando ate ';'");
+    diag.warn(peek().line, peek().col, "comando nao suportado ainda; ignorando ate ';'");
     while (!atEnd() && peek().kind != TokenKind::Semicolon) pos++;
     match(TokenKind::Semicolon);
     return std::make_unique<Block>(); // no-op
