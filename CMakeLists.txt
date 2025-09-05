@@ -33,7 +33,8 @@ add_library(mycc STATIC
     # src/diagnostics.cpp
     # src/token.cpp
 )
-
+add_library(mycc_runtime STATIC src/runtime.c)
+set_target_properties(mycc_runtime PROPERTIES LINKER_LANGUAGE C)
 # Exponha os headers públicos a quem linkar com a lib
 # (coloque TODOS os .hpp públicos em include/, não em src/)
 target_include_directories(mycc
@@ -45,7 +46,21 @@ target_include_directories(mycc
 
 # Escolha os componentes do LLVM de que você precisa
 # (pelo seu projeto, core e support costumam bastar)
-llvm_map_components_to_libnames(LLVM_LIBS core support)
+llvm_map_components_to_libnames(LLVM_LIBS
+  core
+  support
+  target
+  mc
+  mcparser
+  codegen
+  asmprinter
+  asmparser
+  irreader
+  object
+  bitwriter
+  native
+  nativecodegen
+)
 
 # Linke LLVM na biblioteca (se a lib usa LLVM diretamente)
 target_link_libraries(mycc PRIVATE ${LLVM_LIBS})

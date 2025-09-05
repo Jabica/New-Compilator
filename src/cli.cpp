@@ -7,10 +7,18 @@
 #include "codegen.hpp"
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/FileSystem.h>
+#include <llvm/IR/Verifier.h>
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <string>
+#include <cstdlib>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/TargetParser/Triple.h>
+#include <llvm/TargetParser/Host.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/IR/LegacyPassManager.h>
 
 namespace mycc {
 namespace cli {
@@ -24,51 +32,115 @@ static std::string readFile(const std::string& path) {
 
 int run(int argc, char** argv) {
     if (argc < 2) {
-        std::cout << "Uso: mycc_cli [--help|--parse-only|--dump-ast|--dump-ir|--check] <arquivo.my>\n";
+        std::cout << "Uso: mycc_cli [--help|--parse-only|--dump-ast|--dump-ir|--check|--emit-ll[=<arq>]|--emit-obj[=<arq>]|--run] <arquivo.my>\n";
         return 1;
     }
 
+    auto isFlag = [](const std::string& s) {
+        return s.rfind("--", 0) == 0 || s == "-o";
+    };
+
     std::string mode = argv[1];
+    bool emitLL = false;
+    std::string outPath;
+    std::string file;
+    bool emitOBJ = false;
+    std::string outObjPath;
+    bool runMode = false;
+
     if (mode == "--help") {
         std::cout << "mycc-pt - Compilador Educacional\n";
         std::cout << "Flags disponíveis:\n";
-        std::cout << "  --help        Exibe esta mensagem\n";
-        std::cout << "  --parse-only  Executa apenas análise léxica/sintática\n";
-        std::cout << "  --dump-ast    Mostra a AST gerada\n";
-        std::cout << "  --dump-ir     Mostra o IR LLVM\n";
-        std::cout << "  --check       Verifica semantica (tabela de simbolos e tipos)\n";
-        std::cout << "  --emit-ll     Gera o IR LLVM em formato .ll (stdout ou com -o)\n";
-        std::cout << "  -o <arquivo>  Especifica arquivo de saída (para --emit-ll)\n";
+        std::cout << "  --help               Exibe esta mensagem\n";
+        std::cout << "  --parse-only         Executa apenas análise léxica/sintática\n";
+        std::cout << "  --dump-ast           Mostra a AST gerada\n";
+        std::cout << "  --dump-ir            Mostra o IR LLVM (roda semântica e verifica IR)\n";
+        std::cout << "  --check              Verifica semântica (tabela de símbolos e tipos)\n";
+        std::cout << "  --emit-ll            Gera o IR LLVM em .ll (sem -o: salva em <input>.ll)\n";
+        std::cout << "  --emit-ll=<arq>      Gera o IR LLVM no arquivo informado\n";
+        std::cout << "  --emit-llvm          Alias de --emit-ll\n";
+        std::cout << "  --emit-llvm=<arq>    Alias de --emit-ll=<arq>\n";
+        std::cout << "  --emit-obj           Gera objeto nativo (.o) (sem -o: salva em <input>.o)\n";
+        std::cout << "  --emit-obj=<arq>     Gera objeto nativo no arquivo informado\n";
+        std::cout << "  --run                Gera IR e executa com 'lli'\n";
+        std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
+        std::cout << "\nDica: você pode passar só o arquivo (sem flag) para rodar --check por padrão.\n";
         return 0;
     }
 
-    bool emitLL = false;
-    std::string outPath;
+    // Se argv[1] NÃO é flag, tratamos como arquivo e assumimos modo --check
+    if (!isFlag(mode)) {
+        file = mode;      // argv[1] é o arquivo
+        mode = std::string("--check");
+    } else {
+        // Modo com flags
+        bool modeEmitLL = (mode == "--emit-ll" || mode == "--emit-llvm" ||
+                           mode.rfind("--emit-ll=", 0) == 0 || mode.rfind("--emit-llvm=", 0) == 0);
+        bool modeEmitOBJ = (mode == "--emit-obj" || mode.rfind("--emit-obj=", 0) == 0);
+        bool modeRun = (mode == "--run");
 
-    std::string file;
+        if (modeEmitLL) {
+            emitLL = true;
+            // permite --emit-ll=out.ll ou --emit-llvm=out.ll
+            auto eq = mode.find('=');
+            if (eq != std::string::npos) {
+                outPath = mode.substr(eq + 1);
+            }
 
-    if (mode == "--emit-ll") {
-        emitLL = true;
-        if (argc < 3) {
-            std::cerr << "error: faltou o caminho do arquivo .my\n";
-            return 1;
-        }
-        if (std::string(argv[2]) == "-o") {
-            if (argc < 5) {
-                std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
+            int idx = 2; // próximo argumento deve ser -o ou o arquivo de entrada
+            if (argc <= idx) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
-            outPath = argv[3];
-            file = argv[4];
+            if (std::string(argv[idx]) == "-o") {
+                if (argc < idx + 3) {
+                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
+                    return 1;
+                }
+                // -o sempre prevalece sobre o valor vindo de --emit-ll=...
+                outPath = argv[idx + 1];
+                file    = argv[idx + 2];
+            } else {
+                file = argv[idx];
+            }
+        } else if (modeEmitOBJ) {
+            emitOBJ = true;
+            // permite --emit-obj=out.o
+            auto eq = mode.find('=');
+            if (eq != std::string::npos) {
+                outObjPath = mode.substr(eq + 1);
+            }
+
+            int idx = 2; // pode vir -o <arq> antes do arquivo de entrada
+            if (argc <= idx) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+            if (std::string(argv[idx]) == "-o") {
+                if (argc < idx + 3) {
+                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
+                    return 1;
+                }
+                outObjPath = argv[idx + 1];
+                file       = argv[idx + 2];
+            } else {
+                file = argv[idx];
+            }
+        } else if (modeRun) {
+            runMode = true;
+            if (argc < 3) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+            file = argv[2];
         } else {
+            // Demais modos esperam o arquivo em argv[2]
+            if (argc < 3) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
             file = argv[2];
         }
-    } else {
-        if (argc < 3) {
-            std::cerr << "error: faltou o caminho do arquivo .my\n";
-            return 1;
-        }
-        file = argv[2];
     }
 
     std::string src = readFile(file);
@@ -95,10 +167,23 @@ int run(int argc, char** argv) {
         if (prog) prog->dump(std::cout);
         return 0;
     } else if (mode == "--dump-ir") {
-        // Gera e imprime IR real do programa
+        // Semântica antes de gerar IR
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+        // Gera IR
         Codegen cg("mycc_module", diag);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
+
+        // Verifica IR
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR inválido gerado (verifyModule)\n";
+            return 1;
+        }
+
         module->print(llvm::outs(), nullptr);
         return 0;
     } else if (mode == "--check") {
@@ -110,21 +195,159 @@ int run(int argc, char** argv) {
     }
 
     if (emitLL) {
+        // Semântica antes de gerar IR
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+
         Codegen cg("mycc_module", diag);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
+        // Verifica IR
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR inválido gerado (verifyModule)\n";
+            return 1;
+        }
+
+        // Sem -o (e sem --emit-ll=...), salvar em <input>.ll
         if (outPath.empty()) {
-            module->print(llvm::outs(), nullptr);
-        } else {
+            auto pos = file.rfind('.');
+            std::string base = (pos == std::string::npos) ? file : file.substr(0, pos);
+            outPath = base + ".ll";
+        }
+
+        std::error_code ec;
+        llvm::raw_fd_ostream out(outPath, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            std::cerr << outPath << ": error: " << ec.message() << "\n";
+            return 1;
+        }
+        module->print(out, nullptr);
+        out.flush();
+        std::cout << "OK: IR salvo em " << outPath << "\n";
+        return 0;
+    }
+
+    if (emitOBJ) {
+        // Semântica antes de gerar IR
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+
+        Codegen cg("mycc_module", diag);
+        auto module = cg.run(prog.get());
+        if (diag.hadError || !module) return 1;
+
+        // Verifica IR
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR invalido\n";
+            return 1;
+        }
+
+        // Inicializa alvo nativo (uma vez)
+        static bool inited = false;
+        if (!inited) {
+            llvm::InitializeNativeTarget();
+            llvm::InitializeNativeTargetAsmPrinter();
+            llvm::InitializeNativeTargetAsmParser();
+            inited = true;
+        }
+
+        auto targetTriple = llvm::sys::getDefaultTargetTriple();
+        llvm::Triple TT(targetTriple);
+        module->setTargetTriple(TT);
+
+        std::string terr;
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(TT.getTriple(), TT, terr);
+        if (!target) {
+            std::cerr << "error: " << terr << "\n";
+            return 1;
+        }
+
+        llvm::TargetOptions opt;
+        auto rm = llvm::Reloc::Model::PIC_;
+        std::unique_ptr<llvm::TargetMachine> TM(
+            target->createTargetMachine(TT, "generic", "", opt, rm)
+        );
+
+        module->setDataLayout(TM->createDataLayout());
+
+        // Caminho de saída padrão (.o ao lado do .my)
+        if (outObjPath.empty()) {
+            outObjPath = file;
+            auto pos = outObjPath.find_last_of('.');
+            if (pos != std::string::npos) outObjPath = outObjPath.substr(0, pos);
+            outObjPath += ".o";
+        }
+
+        std::error_code ec;
+        llvm::raw_fd_ostream dest(outObjPath, ec, llvm::sys::fs::OF_None);
+        if (ec) {
+            std::cerr << outObjPath << ": error: " << ec.message() << "\n";
+            return 1;
+        }
+
+        llvm::legacy::PassManager pass;
+        if (TM->addPassesToEmitFile(pass, dest, nullptr, llvm::CodeGenFileType::ObjectFile)) {
+            std::cerr << "error: este alvo nao suporta emissao de objeto\n";
+            return 1;
+        }
+        pass.run(*module);
+        dest.flush();
+
+        std::cout << "OK: objeto salvo em " << outObjPath << "\n";
+        return 0;
+    }
+
+    if (runMode) {
+        // 1) Semântica
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+
+        // 2) Gera IR
+        Codegen cg("mycc_module", diag);
+        auto module = cg.run(prog.get());
+        if (diag.hadError || !module) return 1;
+
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR invalido\n";
+            return 1;
+        }
+
+        // 3) Arquivo temporario .ll
+        std::string tmpLL = file;
+        {
+            auto pos = tmpLL.find_last_of('/');
+            std::string base = (pos == std::string::npos) ? tmpLL : tmpLL.substr(pos+1);
+            pos = base.find_last_of('.');
+            if (pos != std::string::npos) base = base.substr(0,pos);
+            tmpLL = "/tmp/" + base + ".ll";
+        }
+
+        {
             std::error_code ec;
-            llvm::raw_fd_ostream out(outPath, ec);
+            llvm::raw_fd_ostream out(tmpLL, ec, llvm::sys::fs::OF_Text);
             if (ec) {
-                std::cerr << outPath << ": error: " << ec.message() << "\n";
+                std::cerr << tmpLL << ": error: " << ec.message() << "\n";
                 return 1;
             }
             module->print(out, nullptr);
             out.flush();
+        }
+
+        // 4) Executa com lli
+        int rc = std::system((std::string("lli ") + tmpLL).c_str());
+        if (rc != 0) {
+            std::cerr << "error: lli retornou codigo " << rc << "\n";
+            return 1;
         }
         return 0;
     }
