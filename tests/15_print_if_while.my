@@ -1,0 +1,10 @@
+// deve imprimir 3,2,1
+funcao main(): inteiro {
+    variavel x: inteiro = 3;
+    enquanto (x) {
+        printi(x);
+        x = x - 1;
+    }
+    se (x == 0) { printb(verdadeiro); } senao { printb(falso); }
+    retorna 0;
+}

@@ -339,14 +339,55 @@ Value* Codegen::emitUnary(Unary* u, Scope& scope) {
 }
 
 Value* Codegen::emitBinary(Binary* b, Scope& scope) {
-    auto* L = emitExpr(b->lhs.get(), scope);
-    auto* R = emitExpr(b->rhs.get(), scope);
-
-    auto* i32 = llvm::Type::getInt32Ty(ctx);
-    if (!L->getType()->isIntegerTy(32)) L = builder->CreateZExtOrTrunc(L, i32);
-    if (!R->getType()->isIntegerTy(32)) R = builder->CreateZExtOrTrunc(R, i32);
+    // Primeiro, avalia operandos (sem forçar para i32 ainda)
+    Value* L = emitExpr(b->lhs.get(), scope);
+    Value* R = nullptr; // R só será avaliado imediatamente para operadores não-curto-circuito
 
     const std::string& op = b->op;
+
+    // --- Curto-circuito para operadores lógicos && e || ---
+    if (op == "&&" || op == "||") {
+        llvm::Function* F = builder->GetInsertBlock()->getParent();
+        // Bloco atual é o bloco do cond (onde testamos LHS)
+        llvm::BasicBlock* condBB = builder->GetInsertBlock();
+        auto* rhsBB  = llvm::BasicBlock::Create(ctx, "logic.rhs", F);
+        auto* endBB  = llvm::BasicBlock::Create(ctx, "logic.end");
+
+        // Converte LHS para i1
+        Value* lhsBool = toBool(L);
+        if (op == "&&")
+            builder->CreateCondBr(lhsBool, rhsBB, endBB);
+        else
+            builder->CreateCondBr(lhsBool, endBB, rhsBB);
+
+        // RHS
+        builder->SetInsertPoint(rhsBB);
+        Value* rhsBool = toBool( emitExpr(b->rhs.get(), scope) );
+        builder->CreateBr(endBB);
+
+        // END + PHI i1
+        F->insert(F->end(), endBB);
+        builder->SetInsertPoint(endBB);
+        PHINode* phi = builder->CreatePHI(llvm::Type::getInt1Ty(ctx), 2, "logic.phi");
+        if (op == "&&") {
+            phi->addIncoming(ConstantInt::getFalse(ctx), condBB);
+            phi->addIncoming(rhsBool, rhsBB);
+        } else { // "||"
+            phi->addIncoming(ConstantInt::getTrue(ctx),  condBB);
+            phi->addIncoming(rhsBool, rhsBB);
+        }
+        // Nossa linguagem retorna i32 em expressões; faça ZExt de i1 -> i32
+        return builder->CreateZExt(phi, llvm::Type::getInt32Ty(ctx), "bool2i32");
+    }
+
+    // Para operadores aritméticos e de comparação, promova para i32 quando necessário
+    auto* i32 = llvm::Type::getInt32Ty(ctx);
+    if (!L->getType()->isIntegerTy(32)) L = builder->CreateZExtOrTrunc(L, i32);
+
+    // Somente agora avalie R para os demais operadores
+    R = emitExpr(b->rhs.get(), scope);
+    if (!R->getType()->isIntegerTy(32)) R = builder->CreateZExtOrTrunc(R, i32);
+
     if (op=="+")  return builder->CreateAdd(L, R, "addtmp");
     if (op=="-")  return builder->CreateSub(L, R, "subtmp");
     if (op=="*")  return builder->CreateMul(L, R, "multmp");

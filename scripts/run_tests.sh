@@ -28,6 +28,7 @@ MUST_PASS=(
 "$ROOT/tests/12_shadowing_ok.my"
 "$ROOT/tests/13_params_implicit_conv_ok.my"
 "$ROOT/tests/14_unary_ok.my"
+
 )
 MUST_FAIL=(
   "$ROOT/tests/90_should_fail_missing_semicolon.my"
