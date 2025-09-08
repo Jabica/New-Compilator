@@ -6,6 +6,7 @@ namespace mycc {
 static TokenKind keywordKind(const std::string& s) {
     static const std::unordered_map<std::string, TokenKind> kw = {
         {"funcao", TokenKind::KwFuncao},
+        {"func",   TokenKind::KwFuncao}, // alias aceito nos testes
         {"variavel", TokenKind::KwVariavel},
         {"var", TokenKind::KwVariavel},
         {"retorna", TokenKind::KwRetorna},

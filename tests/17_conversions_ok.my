@@ -1,0 +1,7 @@
+func inc(x: inteiro): inteiro {
+  retorna x + 1;
+}
+
+func main(): inteiro {
+  retorna inc(1 < 2); // (1<2) é logico; precisa virar inteiro (1) para o param de inc
+}

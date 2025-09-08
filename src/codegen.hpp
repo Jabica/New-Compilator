@@ -43,27 +43,27 @@ private:
     };
 
     // ---- Helpers/infra ----
-    void seedBuiltins();                         // declarações das funções auxiliares
+    void              seedBuiltins(); // declarações das funções auxiliares (se usadas no projeto)
     llvm::Type*       ty(const Type& t);
     llvm::Function*   emitFuncDecl(FuncDecl* f);
     llvm::AllocaInst* createEntryAlloca(llvm::Function* F, llvm::Type* T, const std::string& name);
 
-    // Conversions helpers
-    llvm::Value* toBool(llvm::Value* v);        // iN -> i1
-    llvm::Value* toInt32(llvm::Value* v);       // i1/iN -> i32
-    llvm::Value* castForParam(llvm::Value* v, llvm::Type* paramTy);
+    // ---- Conversions helpers ----
+    llvm::Value* toBool  (llvm::Value* v);                 // iN -> i1
+    llvm::Value* toInt32 (llvm::Value* v);                 // i1/iN -> i32
+    llvm::Value* castForParam (llvm::Value* v, llvm::Type* paramTy);
     llvm::Value* castForReturn(llvm::Value* v, llvm::Type* retTy);
 
     // ---- Emissão por nó ----
     void emitFuncBody(FuncDecl* f);
-    void emitBlock(Block* b, Scope& scope);
-    void emitStmt(Stmt* s, Scope& scope);
-    void emitIf(IfStmt* s, Scope& scope);
-    void emitWhile(WhileStmt* s, Scope& scope);
+    void emitBlock   (Block* b, Scope& scope);
+    void emitStmt    (Stmt* s, Scope& scope);
+    void emitIf      (IfStmt* s, Scope& scope);
+    void emitWhile   (WhileStmt* s, Scope& scope);
 
     // ---- Expressões ----
-    llvm::Value* emitExpr(Expr* e, Scope& scope);
-    llvm::Value* emitUnary(Unary* u, Scope& scope);
+    llvm::Value* emitExpr  (Expr* e, Scope& scope);
+    llvm::Value* emitUnary (Unary* u, Scope& scope);
     llvm::Value* emitBinary(Binary* b, Scope& scope);
 };
 

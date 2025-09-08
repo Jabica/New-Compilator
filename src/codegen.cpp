@@ -6,6 +6,7 @@ using namespace llvm;
 
 namespace mycc {
 
+    
 // ------------------------------------------------------------
 Codegen::Codegen(std::string moduleName, Diag& d)
     : diag(d) {
@@ -152,11 +153,12 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
         if (v->init) {
             auto* initV = emitExpr(v->init.get(), scope);
-            auto* T = A->getAllocatedType(); // i32
-            if (T->isIntegerTy() && initV->getType() != T) {
-                initV = builder->CreateZExtOrTrunc(initV, T);
+            auto* T = A->getAllocatedType();
+            if (T->isIntegerTy(1)) {
+                initV = toBool(initV);
+            } else if (T->isIntegerTy(32)) {
+                initV = toInt32(initV);
             }
-            // Para vetor, vamos inicializar a posição 0 (opcional). Para já, apenas escalar:
             if (v->arrayLen == 0) {
                 builder->CreateStore(initV, A);
             }
@@ -171,9 +173,11 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
             return;
         }
         auto* rhs = emitExpr(a->value.get(), scope);
-        auto* T = A->getAllocatedType(); // i32
-        if (T->isIntegerTy() && rhs->getType() != T) {
-            rhs = builder->CreateZExtOrTrunc(rhs, T);
+        auto* T = A->getAllocatedType();
+        if (T->isIntegerTy(1)) {
+            rhs = toBool(rhs);
+        } else if (T->isIntegerTy(32)) {
+            rhs = toInt32(rhs);
         }
         builder->CreateStore(rhs, A);
         return;
@@ -210,8 +214,11 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
         // valor a gravar
         Value* val = emitExpr(ai->value.get(), scope);
-        if (val->getType() != A->getAllocatedType()) {
-            val = builder->CreateZExtOrTrunc(val, A->getAllocatedType());
+        llvm::Type* elemTy = A->getAllocatedType();
+        if (elemTy->isIntegerTy(1)) {
+            val = toBool(val);
+        } else if (elemTy->isIntegerTy(32)) {
+            val = toInt32(val);
         }
         builder->CreateStore(val, elemPtr);
         return;
@@ -338,14 +345,55 @@ Value* Codegen::emitUnary(Unary* u, Scope& scope) {
 }
 
 Value* Codegen::emitBinary(Binary* b, Scope& scope) {
-    auto* L = emitExpr(b->lhs.get(), scope);
-    auto* R = emitExpr(b->rhs.get(), scope);
-
-    auto* i32 = llvm::Type::getInt32Ty(ctx);
-    if (!L->getType()->isIntegerTy(32)) L = builder->CreateZExtOrTrunc(L, i32);
-    if (!R->getType()->isIntegerTy(32)) R = builder->CreateZExtOrTrunc(R, i32);
+    // Primeiro, avalia operandos (sem forçar para i32 ainda)
+    Value* L = emitExpr(b->lhs.get(), scope);
+    Value* R = nullptr; // R só será avaliado imediatamente para operadores não-curto-circuito
 
     const std::string& op = b->op;
+
+    // --- Curto-circuito para operadores lógicos && e || ---
+    if (op == "&&" || op == "||") {
+        llvm::Function* F = builder->GetInsertBlock()->getParent();
+        // Bloco atual é o bloco do cond (onde testamos LHS)
+        llvm::BasicBlock* condBB = builder->GetInsertBlock();
+        auto* rhsBB  = llvm::BasicBlock::Create(ctx, "logic.rhs", F);
+        auto* endBB  = llvm::BasicBlock::Create(ctx, "logic.end");
+
+        // Converte LHS para i1
+        Value* lhsBool = toBool(L);
+        if (op == "&&")
+            builder->CreateCondBr(lhsBool, rhsBB, endBB);
+        else
+            builder->CreateCondBr(lhsBool, endBB, rhsBB);
+
+        // RHS
+        builder->SetInsertPoint(rhsBB);
+        Value* rhsBool = toBool( emitExpr(b->rhs.get(), scope) );
+        builder->CreateBr(endBB);
+
+        // END + PHI i1
+        F->insert(F->end(), endBB);
+        builder->SetInsertPoint(endBB);
+        PHINode* phi = builder->CreatePHI(llvm::Type::getInt1Ty(ctx), 2, "logic.phi");
+        if (op == "&&") {
+            phi->addIncoming(ConstantInt::getFalse(ctx), condBB);
+            phi->addIncoming(rhsBool, rhsBB);
+        } else { // "||"
+            phi->addIncoming(ConstantInt::getTrue(ctx),  condBB);
+            phi->addIncoming(rhsBool, rhsBB);
+        }
+        // Nossa linguagem retorna i32 em expressões; faça ZExt de i1 -> i32
+        return builder->CreateZExt(phi, llvm::Type::getInt32Ty(ctx), "bool2i32");
+    }
+
+    // Para operadores aritméticos e de comparação, promova para i32 quando necessário
+    auto* i32 = llvm::Type::getInt32Ty(ctx);
+    if (!L->getType()->isIntegerTy(32)) L = builder->CreateZExtOrTrunc(L, i32);
+
+    // Somente agora avalie R para os demais operadores
+    R = emitExpr(b->rhs.get(), scope);
+    if (!R->getType()->isIntegerTy(32)) R = builder->CreateZExtOrTrunc(R, i32);
+
     if (op=="+")  return builder->CreateAdd(L, R, "addtmp");
     if (op=="-")  return builder->CreateSub(L, R, "subtmp");
     if (op=="*")  return builder->CreateMul(L, R, "multmp");

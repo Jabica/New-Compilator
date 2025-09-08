@@ -1,0 +1,6 @@
+func main(): inteiro {
+  se ( (1 + 2) * 3 == 9 ) {
+    retorna 0;
+  }
+  retorna 0;
+}
