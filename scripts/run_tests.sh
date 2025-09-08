@@ -338,4 +338,10 @@ if [[ -x "$ROOT/scripts/run_opt_tests.sh" ]]; then
   "$ROOT/scripts/run_opt_tests.sh" || true
 fi
 
+ # Smoke tests de target (não afeta o rc geral)
+if [[ -x "$ROOT/scripts/run_target_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_target_tests.sh" || true
+fi
+
 [[ $fail -eq 0 ]] || exit 1

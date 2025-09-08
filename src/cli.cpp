@@ -64,6 +64,7 @@ int run(int argc, char** argv) {
     std::string optLevel = "O0";      // padrão
     bool optProvided = false;          // se o usuário passou --opt
     std::string optPipeline;           // pipeline textual custom
+    std::string targetTripleArg;       // --target=<triple>
 
     // Pre-scan: capture opções de otimização em qualquer posição
     for (int i = 1; i < argc; ++i) {
@@ -83,6 +84,7 @@ int run(int argc, char** argv) {
             std::cerr << "error: falta valor para --opt-pipeline (use --opt-pipeline=<texto>)\n";
             return 1;
         }
+    
     }
 
     if (mode == "--help") {
@@ -110,6 +112,7 @@ int run(int argc, char** argv) {
         std::cout << "  --opt[=O0|O1|O2|O3|Os|Oz]   Define o nivel de otimizacao (padrao: O0)\n";
         std::cout << "  --opt-pipeline=<texto>      Pipeline textual personalizado (PassBuilder)\n";
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
+        std::cout << "  --target=<triple>    Define o target triple (ex.: aarch64-apple-darwin, x86_64-apple-darwin)\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
         std::cout << "\nDica: você pode passar só o arquivo (sem flag) para rodar --check por padrão.\n";
         return 0;
@@ -148,6 +151,29 @@ int run(int argc, char** argv) {
             mode = argv[2];
             consumedOptFirst = true;
             optProvided = true;
+            // recalc modos
+            modeEmitLL = (mode == "--emit-ll" || mode == "--emit-llvm" ||
+                           startsWith(mode, "--emit-ll=") || startsWith(mode, "--emit-llvm="));
+            modeEmitOBJ = (mode == "--emit-obj" || startsWith(mode, "--emit-obj="));
+            modeRun = (mode == "--run");
+            modeEmitEXE = (mode == "--emit-exe" || startsWith(mode, "--emit-exe="));
+            modeEmitLLOpt = (mode == "--emit-ll-opt" || startsWith(mode, "--emit-ll-opt="));
+            modeEmitASM = (mode == "--emit-asm" || startsWith(mode, "--emit-asm="));
+            modeEmitBC  = (mode == "--emit-bc"  || startsWith(mode, "--emit-bc="));
+        }
+
+        // Trata --target=<triple> quando vem antes do modo
+        if (startsWith(mode, "--target=")) {
+            targetTripleArg = mode.substr(std::string("--target=").size());
+            if (targetTripleArg.empty()) {
+                std::cerr << "error: --target requer um triple (ex.: aarch64-apple-darwin)\n";
+                return 1;
+            }
+            if (argc < 3) {
+                std::cerr << "error: faltou o modo e o arquivo de entrada\n";
+                return 1;
+            }
+            mode = argv[2];
             // recalc modos
             modeEmitLL = (mode == "--emit-ll" || mode == "--emit-llvm" ||
                            startsWith(mode, "--emit-ll=") || startsWith(mode, "--emit-llvm="));
@@ -416,6 +442,21 @@ int run(int argc, char** argv) {
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
+        // Marcar triple no IR, se fornecido
+        if (!targetTripleArg.empty()) {
+            module->setTargetTriple(llvm::Triple(targetTripleArg));
+        }
+
+        // Marcar triple no IR, se fornecido
+        if (!targetTripleArg.empty()) {
+            module->setTargetTriple(llvm::Triple(targetTripleArg));
+        }
+
+        // Marcar triple no IR, se fornecido
+        if (!targetTripleArg.empty()) {
+            module->setTargetTriple(llvm::Triple(targetTripleArg));
+        }
+
         // Verifica IR
         if (llvm::verifyModule(*module, &llvm::errs())) {
             std::cerr << "error: IR inválido gerado (verifyModule)\n";
@@ -675,11 +716,6 @@ int run(int argc, char** argv) {
         if (diag.hadError || !module) return 1;
 
         // Verifica IR
-        if (llvm::verifyModule(*module, &llvm::errs())) {
-            std::cerr << "error: IR invalido\n";
-            return 1;
-        }
-
         // Inicializa alvo nativo (uma vez)
         static bool inited = false;
         if (!inited) {
@@ -689,8 +725,9 @@ int run(int argc, char** argv) {
             inited = true;
         }
 
-        auto targetTriple = llvm::sys::getDefaultTargetTriple();
-        llvm::Triple TT(targetTriple);
+        // Triple escolhido ou nativo
+        llvm::Triple TT(targetTripleArg.empty() ? llvm::sys::getDefaultTargetTriple()
+                                               : targetTripleArg);
         module->setTargetTriple(TT);
 
         std::string terr;
@@ -707,6 +744,12 @@ int run(int argc, char** argv) {
         );
 
         module->setDataLayout(TM->createDataLayout());
+
+        // Verifica IR
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR invalido\n";
+            return 1;
+        }
 
         // Otimização opcional (com TM disponível)
         if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
