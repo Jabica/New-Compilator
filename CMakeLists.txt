@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(mycc-pt VERSION 0.1 LANGUAGES C CXX)
 
+# Passa caminhos de origem e build para o executável (usado pelo --emit-exe)
+add_compile_definitions(MYCC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_compile_definitions(MYCC_BUILD_DIR="${CMAKE_BINARY_DIR}")
+
 # Alinhar o deployment target ao LLVM instalado (evita warnings de "newer macOS version")
 set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
 

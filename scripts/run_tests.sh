@@ -284,5 +284,51 @@ else
 fi
 
 echo
+echo "▶︎ Teste extra: --emit-exe exit 0 (deve passar)"
+echo "──> Rodando: $ROOT/tests/18_emit_exe_exit0.my (emit-exe esperado: pass)"
+EXE_OUT="/tmp/t_prog_exe"
+"$BIN" --emit-exe -o "$EXE_OUT" "$ROOT/tests/18_emit_exe_exit0.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -eq 0 ]]; then
+  if "$EXE_OUT" >/dev/null 2>&1; then
+    echo "✅ OK  : $ROOT/tests/18_emit_exe_exit0.my (executavel rodou e retornou 0)"
+    pass=$((pass+1))
+  else
+    echo "❌ FAIL: $ROOT/tests/18_emit_exe_exit0.my (executavel retornou codigo != 0)"
+    fail=$((fail+1))
+  fi
+else
+  echo "❌ FAIL: $ROOT/tests/18_emit_exe_exit0.my (nao gerou executavel)"
+  fail=$((fail+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --emit-asm ok (deve passar)"
+echo "──> Rodando: $ROOT/tests/19_emit_asm_ok.my (emit-asm esperado: pass)"
+ASM_OUT="/tmp/t_prog_asm.s"
+"$BIN" --emit-asm -o "$ASM_OUT" "$ROOT/tests/19_emit_asm_ok.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -eq 0 && -s "$ASM_OUT" ]]; then
+  echo "✅ OK  : $ROOT/tests/19_emit_asm_ok.my (assembly gerado)"
+  pass=$((pass+1))
+else
+  echo "❌ FAIL: $ROOT/tests/19_emit_asm_ok.my (nao gerou assembly valido)"
+  fail=$((fail+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --emit-exe sem main (deve falhar)"
+echo "──> Rodando: $ROOT/tests/107_emit_exe_without_main.my (emit-exe esperado: fail)"
+"$BIN" --emit-exe -o /tmp/x "$ROOT/tests/107_emit_exe_without_main.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+  echo "✅ OK(F): $ROOT/tests/107_emit_exe_without_main.my (falhou como esperado)"
+  pass=$((pass+1))
+else
+  echo "❌ FAIL: $ROOT/tests/107_emit_exe_without_main.my (gerou executavel mas deveria falhar)"
+  fail=$((fail+1))
+fi
+
+echo
 echo "Resumo: pass=$pass fail=$fail"
 [[ $fail -eq 0 ]] || exit 1
