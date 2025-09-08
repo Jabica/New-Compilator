@@ -1,9 +1,11 @@
 # ninja log v7
-9	4419	1757030599871986383	CMakeFiles/mycc_cli.dir/src/main.cpp.o	14a79715dfea57f6
-7	4954	1757030599869590050	CMakeFiles/mycc.dir/src/diagnostics.cpp.o	78cec6105e3fd753
-4	5197	1757030599866354035	CMakeFiles/mycc.dir/src/lexer.cpp.o	5393b29bb4f318a1
-5	5765	1757030599867331344	CMakeFiles/mycc.dir/src/parser.cpp.o	b043938b07dc6663
-6	8308	1757030599868095065	CMakeFiles/mycc.dir/src/codegen.cpp.o	87326aa1853124d
-3	9101	1757030599864773258	CMakeFiles/mycc.dir/src/cli.cpp.o	a3a45a18a8c0877b
-9102	9401	1757030608964523800	libmycc.a	8e2d42fb3fba7f02
-9401	9765	1757030609263673703	mycc_cli	50483e6da6534a97
+2	50	1757369455360043640	CMakeFiles/mycc_runtime.dir/src/runtime.c.o	bbbbb55c50a03ac2
+50	105	1757369455408440856	libmycc_runtime.a	a3d3cbce06d30752
+2	386	1757369455360255095	CMakeFiles/mycc_cli.dir/src/main.cpp.o	fe323b32d293aa13
+1	455	1757369455359528480	CMakeFiles/mycc.dir/src/diagnostics.cpp.o	53c9096fc3786b70
+0	486	1757369455358690034	CMakeFiles/mycc.dir/src/lexer.cpp.o	fd0a0b52bc4458a5
+1	568	1757369455358944697	CMakeFiles/mycc.dir/src/parser.cpp.o	a624027701d449c7
+1	896	1757369455359218735	CMakeFiles/mycc.dir/src/codegen.cpp.o	2ff2ec8cee9ee7a3
+0	1187	1757369455358446579	CMakeFiles/mycc.dir/src/cli.cpp.o	76420d1a33130f89
+1187	1238	1757369456545729280	libmycc.a	8e2d42fb3fba7f02
+1238	1343	1757369456595875388	mycc_cli	e2f58d7ae70b94f1
