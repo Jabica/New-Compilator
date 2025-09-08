@@ -53,6 +53,8 @@ int run(int argc, char** argv) {
     bool runMode = false;
     bool emitEXE = false;
     std::string outExePath;
+    bool emitASM = false;
+    std::string outAsmPath;
     bool emitBC = false;
     std::string outBCPath;
     std::string optLevel = "O0"; // padrão
@@ -74,6 +76,8 @@ int run(int argc, char** argv) {
         std::cout << "  --emit-obj=<arq>     Gera objeto nativo no arquivo informado\n";
         std::cout << "  --emit-exe           Gera executavel nativo (sem -o: salva em <input> sem extensao)\n";
         std::cout << "  --emit-exe=<arq>     Gera executavel no arquivo informado\n";
+        std::cout << "  --emit-asm           Gera assembly (.s) (sem -o: salva em <input>.s)\n";
+        std::cout << "  --emit-asm=<arq>     Gera assembly textual no arquivo informado\n";
         std::cout << "  --emit-bc            Gera bitcode LLVM (.bc) (sem -o: <input>.bc)\n";
         std::cout << "  --emit-bc=<arq>      Gera bitcode no arquivo informado\n";
         std::cout << "  --opt=<O0|O1|O2|O3|Os|Oz>  Define o nivel de otimizacao (padrao: O0)\n";
@@ -96,6 +100,7 @@ int run(int argc, char** argv) {
         bool modeEmitOBJ = (mode == "--emit-obj" || mode.rfind("--emit-obj=", 0) == 0);
         bool modeRun = (mode == "--run");
         bool modeEmitEXE = (mode == "--emit-exe" || mode.rfind("--emit-exe=", 0) == 0);
+        bool modeEmitASM = (mode == "--emit-asm" || mode.rfind("--emit-asm=", 0) == 0);
         bool modeEmitBC  = (mode == "--emit-bc"  || mode.rfind("--emit-bc=",  0) == 0);
 
         // Trata --opt=... quando vier como primeira flag e combine com outra flag depois
@@ -120,6 +125,7 @@ int run(int argc, char** argv) {
             modeEmitOBJ = (mode == "--emit-obj" || startsWith(mode, "--emit-obj="));
             modeRun = (mode == "--run");
             modeEmitEXE = (mode == "--emit-exe" || startsWith(mode, "--emit-exe="));
+            modeEmitASM = (mode == "--emit-asm" || startsWith(mode, "--emit-asm="));
             modeEmitBC  = (mode == "--emit-bc"  || startsWith(mode, "--emit-bc="));
         }
 
@@ -212,6 +218,28 @@ int run(int argc, char** argv) {
                 }
                 outBCPath = argv[idx + 1];
                 file      = argv[idx + 2];
+            } else {
+                file = argv[idx];
+            }
+        } else if (modeEmitASM) {
+            emitASM = true;
+            auto eq = mode.find('=');
+            if (eq != std::string::npos) {
+                outAsmPath = mode.substr(eq + 1);
+            }
+
+            int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
+            if (argc <= idx) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+            if (std::string(argv[idx]) == "-o") {
+                if (argc < idx + 3) {
+                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
+                    return 1;
+                }
+                outAsmPath = argv[idx + 1];
+                file       = argv[idx + 2];
             } else {
                 file = argv[idx];
             }
@@ -439,6 +467,96 @@ int run(int argc, char** argv) {
         llvm::WriteBitcodeToFile(*module, out);
         out.flush();
         std::cout << "OK: bitcode salvo em " << outBCPath << "\n";
+        return 0;
+    }
+
+    if (emitASM) {
+        // Semântica antes de gerar IR
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+
+        Codegen cg("mycc_module", diag);
+        auto module = cg.run(prog.get());
+        if (diag.hadError || !module) return 1;
+
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR invalido\n";
+            return 1;
+        }
+
+        // Otimização opcional
+        {
+            llvm::OptimizationLevel OL;
+            if (optProvided) {
+                if (!parseOptLevel(optLevel, OL)) {
+                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
+                              << " (use O0,O1,O2,O3,Os,Oz)\n";
+                    return 1;
+                }
+                if (!module->getFunctionList().empty()) {
+                    runOptimizations(*module, OL);
+                    if (llvm::verifyModule(*module, &llvm::errs())) {
+                        std::cerr << "error: IR invalido apos otimizacao\n";
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        // Inicializa alvo nativo
+        static bool inited = false;
+        if (!inited) {
+            llvm::InitializeNativeTarget();
+            llvm::InitializeNativeTargetAsmPrinter();
+            llvm::InitializeNativeTargetAsmParser();
+            inited = true;
+        }
+
+        auto targetTriple = llvm::sys::getDefaultTargetTriple();
+        llvm::Triple TT(targetTriple);
+        module->setTargetTriple(TT);
+
+        std::string terr;
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget("", TT, terr);
+        if (!target) {
+            std::cerr << "error: " << terr << "\n";
+            return 1;
+        }
+
+        llvm::TargetOptions opt;
+        auto rm = llvm::Reloc::Model::PIC_;
+        std::unique_ptr<llvm::TargetMachine> TM(
+            target->createTargetMachine(TT, "generic", "", opt, rm)
+        );
+        module->setDataLayout(TM->createDataLayout());
+
+        // Caminho de saída padrão (.s ao lado do .my)
+        if (outAsmPath.empty()) {
+            outAsmPath = file;
+            auto pos = outAsmPath.find_last_of('.');
+            if (pos != std::string::npos) outAsmPath = outAsmPath.substr(0, pos);
+            outAsmPath += ".s";
+        }
+
+        std::error_code ec;
+        llvm::raw_fd_ostream dest(outAsmPath, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            std::cerr << outAsmPath << ": error: " << ec.message() << "\n";
+            return 1;
+        }
+
+        llvm::legacy::PassManager pass;
+        if (TM->addPassesToEmitFile(pass, dest, nullptr, llvm::CodeGenFileType::AssemblyFile)) {
+            std::cerr << "error: este alvo nao suporta emissao de assembly\n";
+            return 1;
+        }
+        pass.run(*module);
+        dest.flush();
+
+        std::cout << "OK: assembly salvo em " << outAsmPath << "\n";
         return 0;
     }
 

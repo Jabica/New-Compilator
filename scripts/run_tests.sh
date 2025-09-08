@@ -166,5 +166,64 @@ else
 fi
 
 echo
+echo "▶︎ Teste extra: --emit-asm (deve passar)"
+echo "──> Rodando: $ROOT/tests/16_emit_asm_basic.my (esperado: pass --emit-asm)"
+"$BIN" --emit-asm -o /tmp/t16.s "$ROOT/tests/16_emit_asm_basic.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 || ! -s /tmp/t16.s ]]; then
+  echo "❌ FAIL: $ROOT/tests/16_emit_asm_basic.my (nao gerou .s valido)"
+  fail=$((fail+1))
+else
+  echo "✅ OK  : $ROOT/tests/16_emit_asm_basic.my"
+  pass=$((pass+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --emit-exe basico (deve passar)"
+echo "──> Rodando: $ROOT/tests/18_emit_exe_basic.my (esperado: pass --emit-exe)"
+/bin/rm -f /tmp/t18_basic
+"$BIN" --emit-exe -o /tmp/t18_basic "$ROOT/tests/18_emit_exe_basic.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 || ! -x /tmp/t18_basic ]]; then
+  echo "❌ FAIL: $ROOT/tests/18_emit_exe_basic.my (nao gerou exe)"
+  fail=$((fail+1))
+else
+  /tmp/t18_basic >/dev/null 2>&1
+  if [[ $? -ne 0 ]]; then
+    echo "❌ FAIL: $ROOT/tests/18_emit_exe_basic.my (execucao retornou != 0)"
+    fail=$((fail+1))
+  else
+    echo "✅ OK  : $ROOT/tests/18_emit_exe_basic.my"
+    pass=$((pass+1))
+  fi
+fi
+
+echo
+echo "▶︎ Teste extra: --emit-asm (deve falhar por path invalido)"
+echo "──> Rodando: $ROOT/tests/107_emit_asm_bad_out_path.my (esperado: fail-io)"
+"$BIN" --emit-asm -o /:/out.s "$ROOT/tests/107_emit_asm_bad_out_path.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -eq 0 ]]; then
+  echo "❌ FAIL: $ROOT/tests/107_emit_asm_bad_out_path.my (deveria falhar)"
+  fail=$((fail+1))
+else
+  echo "✅ OK(F): $ROOT/tests/107_emit_asm_bad_out_path.my (falhou como esperado)"
+  pass=$((pass+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --emit-exe (deve falhar por path invalido)"
+echo "──> Rodando: $ROOT/tests/108_emit_exe_bad_out_path.my (esperado: fail-io)"
+"$BIN" --emit-exe -o /:/a.out "$ROOT/tests/108_emit_exe_bad_out_path.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -eq 0 ]]; then
+  echo "❌ FAIL: $ROOT/tests/108_emit_exe_bad_out_path.my (deveria falhar)"
+  fail=$((fail+1))
+else
+  echo "✅ OK(F): $ROOT/tests/108_emit_exe_bad_out_path.my (falhou como esperado)"
+  pass=$((pass+1))
+fi
+
+echo
 echo "Resumo: pass=$pass fail=$fail"
 [[ $fail -eq 0 ]] || exit 1
