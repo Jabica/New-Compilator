@@ -1,0 +1,4 @@
+func inc(x: inteiro): inteiro {
+  retorna x + 1;
+}
+

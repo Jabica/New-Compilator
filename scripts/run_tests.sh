@@ -28,6 +28,7 @@ MUST_PASS=(
 "$ROOT/tests/12_shadowing_ok.my"
 "$ROOT/tests/13_params_implicit_conv_ok.my"
 "$ROOT/tests/14_unary_ok.my"
+"$ROOT/tests/17_conversions_ok.my"
 
 )
 MUST_FAIL=(
@@ -94,6 +95,39 @@ echo "▶︎ Testes que DEVEM falhar"
 for f in "${MUST_FAIL[@]}"; do
   run_case fail "$f"
 done
+
+echo
+
+# Casos especiais para --emit-exe
+echo "▶︎ Teste extra: --emit-exe (deve passar)"
+echo "──> Rodando: $ROOT/tests/18_emit_exe_ok.my (esperado: pass --emit-exe)"
+"$BIN" --emit-exe -o /tmp/t18 "$ROOT/tests/18_emit_exe_ok.my"
+rc=$?
+if [[ $rc -eq 0 ]]; then
+  if /tmp/t18 >/dev/null 2>&1; then
+    echo "   Execução OK de /tmp/t18"
+    pass=$((pass+1))
+  else
+    echo "❌ FAIL: execução de /tmp/t18 não retornou 0"
+    fail=$((fail+1))
+  fi
+else
+  echo "❌ FAIL: --emit-exe falhou para 18_emit_exe_ok.my"
+  fail=$((fail+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --emit-exe (deve falhar)"
+echo "──> Rodando: $ROOT/tests/107_emit_exe_missing_main.my (esperado: fail --emit-exe)"
+"$BIN" --emit-exe -o /tmp/t_no_main "$ROOT/tests/107_emit_exe_missing_main.my"
+rc=$?
+if [[ $rc -ne 0 ]]; then
+  echo "✅ OK(F): $ROOT/tests/107_emit_exe_missing_main.my (falhou como esperado)"
+  pass=$((pass+1))
+else
+  echo "❌ FAIL: $ROOT/tests/107_emit_exe_missing_main.my (deveria falhar)"
+  fail=$((fail+1))
+fi
 
 echo
 echo "Resumo: pass=$pass fail=$fail"

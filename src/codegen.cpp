@@ -153,11 +153,12 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
         if (v->init) {
             auto* initV = emitExpr(v->init.get(), scope);
-            auto* T = A->getAllocatedType(); // i32
-            if (T->isIntegerTy() && initV->getType() != T) {
-                initV = builder->CreateZExtOrTrunc(initV, T);
+            auto* T = A->getAllocatedType();
+            if (T->isIntegerTy(1)) {
+                initV = toBool(initV);
+            } else if (T->isIntegerTy(32)) {
+                initV = toInt32(initV);
             }
-            // Para vetor, vamos inicializar a posição 0 (opcional). Para já, apenas escalar:
             if (v->arrayLen == 0) {
                 builder->CreateStore(initV, A);
             }
@@ -172,9 +173,11 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
             return;
         }
         auto* rhs = emitExpr(a->value.get(), scope);
-        auto* T = A->getAllocatedType(); // i32
-        if (T->isIntegerTy() && rhs->getType() != T) {
-            rhs = builder->CreateZExtOrTrunc(rhs, T);
+        auto* T = A->getAllocatedType();
+        if (T->isIntegerTy(1)) {
+            rhs = toBool(rhs);
+        } else if (T->isIntegerTy(32)) {
+            rhs = toInt32(rhs);
         }
         builder->CreateStore(rhs, A);
         return;
@@ -211,8 +214,11 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
         // valor a gravar
         Value* val = emitExpr(ai->value.get(), scope);
-        if (val->getType() != A->getAllocatedType()) {
-            val = builder->CreateZExtOrTrunc(val, A->getAllocatedType());
+        llvm::Type* elemTy = A->getAllocatedType();
+        if (elemTy->isIntegerTy(1)) {
+            val = toBool(val);
+        } else if (elemTy->isIntegerTy(32)) {
+            val = toInt32(val);
         }
         builder->CreateStore(val, elemPtr);
         return;

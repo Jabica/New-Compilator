@@ -13,6 +13,7 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#include <cstdio>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/TargetParser/Triple.h>
@@ -32,7 +33,7 @@ static std::string readFile(const std::string& path) {
 
 int run(int argc, char** argv) {
     if (argc < 2) {
-        std::cout << "Uso: mycc_cli [--help|--parse-only|--dump-ast|--dump-ir|--check|--emit-ll[=<arq>]|--emit-obj[=<arq>]|--run] <arquivo.my>\n";
+        std::cout << "Uso: mycc_cli [--help|--parse-only|--dump-ast|--dump-ir|--check|--emit-ll[=<arq>]|--emit-obj[=<arq>]|--emit-exe[=<arq>]|--run] <arquivo.my>\n";
         return 1;
     }
 
@@ -47,6 +48,8 @@ int run(int argc, char** argv) {
     bool emitOBJ = false;
     std::string outObjPath;
     bool runMode = false;
+    bool emitEXE = false;
+    std::string outExePath;
 
     if (mode == "--help") {
         std::cout << "mycc-pt - Compilador Educacional\n";
@@ -62,6 +65,8 @@ int run(int argc, char** argv) {
         std::cout << "  --emit-llvm=<arq>    Alias de --emit-ll=<arq>\n";
         std::cout << "  --emit-obj           Gera objeto nativo (.o) (sem -o: salva em <input>.o)\n";
         std::cout << "  --emit-obj=<arq>     Gera objeto nativo no arquivo informado\n";
+        std::cout << "  --emit-exe           Gera executavel nativo (sem -o: salva em <input> sem extensao)\n";
+        std::cout << "  --emit-exe=<arq>     Gera executavel no arquivo informado\n";
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
         std::cout << "\nDica: você pode passar só o arquivo (sem flag) para rodar --check por padrão.\n";
@@ -78,6 +83,7 @@ int run(int argc, char** argv) {
                            mode.rfind("--emit-ll=", 0) == 0 || mode.rfind("--emit-llvm=", 0) == 0);
         bool modeEmitOBJ = (mode == "--emit-obj" || mode.rfind("--emit-obj=", 0) == 0);
         bool modeRun = (mode == "--run");
+        bool modeEmitEXE = (mode == "--emit-exe" || mode.rfind("--emit-exe=", 0) == 0);
 
         if (modeEmitLL) {
             emitLL = true;
@@ -122,6 +128,29 @@ int run(int argc, char** argv) {
                     return 1;
                 }
                 outObjPath = argv[idx + 1];
+                file       = argv[idx + 2];
+            } else {
+                file = argv[idx];
+            }
+        } else if (modeEmitEXE) {
+            emitEXE = true;
+            // permite --emit-exe=out
+            auto eq = mode.find('=');
+            if (eq != std::string::npos) {
+                outExePath = mode.substr(eq + 1);
+            }
+
+            int idx = 2; // pode vir -o <arq> antes do arquivo de entrada
+            if (argc <= idx) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+            if (std::string(argv[idx]) == "-o") {
+                if (argc < idx + 3) {
+                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
+                    return 1;
+                }
+                outExePath = argv[idx + 1];
                 file       = argv[idx + 2];
             } else {
                 file = argv[idx];
@@ -263,7 +292,7 @@ int run(int argc, char** argv) {
         module->setTargetTriple(TT);
 
         std::string terr;
-        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(TT.getTriple(), TT, terr);
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget("", TT, terr);
         if (!target) {
             std::cerr << "error: " << terr << "\n";
             return 1;
@@ -301,6 +330,143 @@ int run(int argc, char** argv) {
         dest.flush();
 
         std::cout << "OK: objeto salvo em " << outObjPath << "\n";
+        return 0;
+    }
+
+    if (emitEXE) {
+        // 1) Semântica
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+
+        // 2) Gera IR
+        Codegen cg("mycc_module", diag);
+        auto module = cg.run(prog.get());
+        if (diag.hadError || !module) return 1;
+
+        // 3) Verifica IR
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR invalido\n";
+            return 1;
+        }
+
+        // 4) Inicializa alvo nativo
+        static bool inited = false;
+        if (!inited) {
+            llvm::InitializeNativeTarget();
+            llvm::InitializeNativeTargetAsmPrinter();
+            llvm::InitializeNativeTargetAsmParser();
+            inited = true;
+        }
+
+        auto targetTriple = llvm::sys::getDefaultTargetTriple();
+        llvm::Triple TT(targetTriple);
+        module->setTargetTriple(TT);
+
+        std::string terr;
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget("", TT, terr);
+        if (!target) {
+            std::cerr << "error: " << terr << "\n";
+            return 1;
+        }
+
+        llvm::TargetOptions opt;
+        auto rm = llvm::Reloc::Model::PIC_;
+        std::unique_ptr<llvm::TargetMachine> TM(
+            target->createTargetMachine(TT, "generic", "", opt, rm)
+        );
+        module->setDataLayout(TM->createDataLayout());
+
+        // 5) Caminhos: .o temporário e exe final
+        std::string base = file;
+        auto pos = base.find_last_of('/');
+        std::string leaf = (pos==std::string::npos) ? base : base.substr(pos+1);
+        auto dot = leaf.find_last_of('.');
+        if (dot != std::string::npos) leaf = leaf.substr(0, dot);
+
+        std::string objTmp = std::string("/tmp/") + leaf + ".o";
+        if (outExePath.empty()) {
+            outExePath = std::string("/tmp/") + leaf;
+        }
+
+        // 6) Emitir .o
+        {
+            std::error_code ec;
+            llvm::raw_fd_ostream dest(objTmp, ec, llvm::sys::fs::OF_None);
+            if (ec) {
+                std::cerr << objTmp << ": error: " << ec.message() << "\n";
+                return 1;
+            }
+            llvm::legacy::PassManager pass;
+            if (TM->addPassesToEmitFile(pass, dest, nullptr, llvm::CodeGenFileType::ObjectFile)) {
+                std::cerr << "error: este alvo nao suporta emissao de objeto\n";
+                return 1;
+            }
+            pass.run(*module);
+            dest.flush();
+        }
+
+        // 7) Linkar com clang + runtime
+        auto shellQuote = [](const std::string& s) {
+            std::string out = "'";
+            for (char c : s) {
+                if (c == '\'') out += "'\"'\"'";
+                else out += c;
+            }
+            out += "'";
+            return out;
+        };
+        auto runAndCapture = [](const char* cmd) -> std::string {
+            std::string out;
+            FILE* p = popen(cmd, "r");
+            if (!p) return out;
+            char buf[256];
+            while (fgets(buf, sizeof(buf), p)) out += buf;
+            pclose(p);
+            while (!out.empty() && (out.back()=='\n' || out.back()=='\r' || out.back()==' ' || out.back()=='\t')) out.pop_back();
+            return out;
+        };
+
+        std::string clangBin = "clang";
+#ifdef __APPLE__
+        // opcional: forcar arquitetura ao clang do sistema
+#endif
+
+        std::string archFlag;
+        if (TT.isArch64Bit()) {
+            if (TT.getArch() == llvm::Triple::aarch64) archFlag = " -arch arm64";
+            else if (TT.getArch() == llvm::Triple::x86_64) archFlag = " -arch x86_64";
+        }
+
+#ifndef MYCC_RUNTIME_LIB
+#  error "MYCC_RUNTIME_LIB nao definido pelo CMake"
+#endif
+
+        std::string cmd = clangBin
+            + archFlag
+            + " -o " + shellQuote(outExePath)
+            + " " + shellQuote(objTmp)
+            + " " + shellQuote(MYCC_RUNTIME_LIB);
+        // Se o SDK padrão estiver incorreto no ambiente, force via xcrun
+#ifdef __APPLE__
+        {
+            std::string sysroot = runAndCapture("xcrun --sdk macosx --show-sdk-path 2>/dev/null");
+            if (!sysroot.empty()) {
+                cmd += " -isysroot " + shellQuote(sysroot);
+            }
+        }
+#endif
+
+        int rc = std::system(cmd.c_str());
+        if (rc != 0) {
+            std::cerr << "error: link falhou (clang retornou " << rc << ")\n";
+            std::cerr << "cmd: " << cmd << "\n";
+            return 1;
+        }
+
+        std::cout << "OK: executavel salvo em " << outExePath << "\n";
         return 0;
     }
 

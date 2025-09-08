@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(mycc-pt VERSION 0.1 LANGUAGES C CXX)
 
-# Evita os warnings de "newer macOS version"
-# (coloque a versão do seu sistema; pelos logs parece 14.4)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
+# Não force a versão de deployment do macOS; use a do toolchain local
+# Para fixar manualmente, exporte CMAKE_OSX_DEPLOYMENT_TARGET no ambiente.
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -34,7 +33,7 @@ add_library(mycc STATIC
     # src/token.cpp
 )
 add_library(mycc_runtime STATIC src/runtime.c)
-set_target_properties(mycc_runtime PROPERTIES LINKER_LANGUAGE C)
+set_target_properties(mycc_runtime PROPERTIES LINKER_LANGUAGE C OUTPUT_NAME "mycc_runtime")
 # Exponha os headers públicos a quem linkar com a lib
 # (coloque TODOS os .hpp públicos em include/, não em src/)
 target_include_directories(mycc
@@ -64,6 +63,10 @@ llvm_map_components_to_libnames(LLVM_LIBS
 
 # Linke LLVM na biblioteca (se a lib usa LLVM diretamente)
 target_link_libraries(mycc PRIVATE ${LLVM_LIBS})
+
+# Expor caminho absoluto da lib do runtime para o CLI invocar o linker externo
+set(MYCC_RUNTIME_LIB "${CMAKE_BINARY_DIR}/libmycc_runtime.a")
+target_compile_definitions(mycc PRIVATE MYCC_RUNTIME_LIB="${MYCC_RUNTIME_LIB}")
 
 # === EXECUTÁVEL ===
 add_executable(mycc_cli src/main.cpp)

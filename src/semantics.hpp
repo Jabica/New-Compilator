@@ -312,7 +312,27 @@ private:
                         ok = false;
                     } else {
                         Type tr = checkExpr(r->value.get(), local);
-                        if (!isImplicitlyConvertible(tr, currentRet)){
+
+                        // Permitir as mesmas conversões dos parâmetros:
+                        // - bool -> int (escalares)
+                        // - int -> bool SOMENTE se for 0/1 literal/const ou variável marcada como boolLike
+                        bool okConv = isImplicitlyConvertible(tr, currentRet);
+                        if (!currentRet.isArray() && !tr.isArray()) {
+                            if (currentRet.kind == Type::Inteiro && tr.kind == Type::Logico) {
+                                okConv = true; // bool -> int
+                            } else if (currentRet.kind == Type::Logico && tr.kind == Type::Inteiro) {
+                                bool isConvertible = false;
+                                long long _tmpConst;
+                                if (tryEvalIntConst(r->value.get(), _tmpConst) && (_tmpConst == 0 || _tmpConst == 1)) {
+                                    isConvertible = true; // apenas 0/1
+                                } else if (auto vr = dynamic_cast<VarRef*>(r->value.get())) {
+                                    if (local.getBoolLike(vr->name)) isConvertible = true;
+                                }
+                                okConv = isConvertible;
+                            }
+                        }
+
+                        if (!okConv){
                             diag.error(0,0, "tipo incompativel no retorno ("+currentRet.str()+" <- "+tr.str()+")");
                             ok = false;
                         }
@@ -322,11 +342,12 @@ private:
                 blockReturns = true; // nada depois
             }
             else if (auto iff = dynamic_cast<IfStmt*>(sptr.get())){
-                Type tc = checkExpr(iff->cond.get(), local);
-                // Pelos testes mais recentes: condição deve ser lógica
-                if (tc.isArray() || tc.kind != Type::Logico){
-                    diag.error(0,0, "condicao de 'se' deve ser logico");
-                    ok = false;
+                {
+                    Type tc = checkExpr(iff->cond.get(), local);
+                    if (tc.isArray() || tc.kind != Type::Logico) {
+                        diag.error(0,0, "condicao de 'se' deve ser logico");
+                        ok = false;
+                    }
                 }
 
                 bool retThen=false, retElse=false;
@@ -339,10 +360,12 @@ private:
                 }
             }
             else if (auto wh = dynamic_cast<WhileStmt*>(sptr.get())){
-                Type tc = checkExpr(wh->cond.get(), local);
-                if (tc.isArray() || tc.kind != Type::Logico){
-                    diag.error(0,0, "condicao de 'enquanto' deve ser logico");
-                    ok = false;
+                {
+                    Type tc = checkExpr(wh->cond.get(), local);
+                    if (tc.isArray() || tc.kind != Type::Logico) {
+                        diag.error(0,0, "condicao de 'enquanto' deve ser logico");
+                        ok = false;
+                    }
                 }
                 bool retBody=false;
                 ok &= checkBlock(wh->body.get(), local, currentRet, retBody);
@@ -370,12 +393,9 @@ private:
             if (!top.declare(p.name, p.type)){
                 diag.error(0,0, "variavel redeclarada: " + p.name);
             }
-            // Heurística: parâmetros inteiros começam como "boolLike" (0/1) até que alguma
-            // atribuição posterior os desmarque. Isso permite a conversão implícita
-            // int->logico ao repassar parâmetros que vêm de 0/1 ou de booleanos.
-            if (p.type.kind == Type::Inteiro) {
-                top.setBoolLikeHere(p.name, true);
-            }
+            // Não marque parâmetros inteiros automaticamente como booleanos.
+            // Uma variável só vira "boolLike" quando for claramente 0/1
+            // (literal/const) ou receber um valor lógico em alguma atribuição.
         }
 
         bool didReturn = false;
