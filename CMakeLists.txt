@@ -54,6 +54,8 @@ llvm_map_components_to_libnames(LLVM_LIBS
   codegen
   asmprinter
   asmparser
+  passes
+  ipo
   irreader
   object
   bitwriter

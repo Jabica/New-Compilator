@@ -8,6 +8,9 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/IR/PassManager.h>
+#include <llvm/Bitcode/BitcodeWriter.h>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -50,6 +53,10 @@ int run(int argc, char** argv) {
     bool runMode = false;
     bool emitEXE = false;
     std::string outExePath;
+    bool emitBC = false;
+    std::string outBCPath;
+    std::string optLevel = "O0"; // padrão
+    bool optProvided = false;     // se o usuário passou --opt
 
     if (mode == "--help") {
         std::cout << "mycc-pt - Compilador Educacional\n";
@@ -67,11 +74,16 @@ int run(int argc, char** argv) {
         std::cout << "  --emit-obj=<arq>     Gera objeto nativo no arquivo informado\n";
         std::cout << "  --emit-exe           Gera executavel nativo (sem -o: salva em <input> sem extensao)\n";
         std::cout << "  --emit-exe=<arq>     Gera executavel no arquivo informado\n";
+        std::cout << "  --emit-bc            Gera bitcode LLVM (.bc) (sem -o: <input>.bc)\n";
+        std::cout << "  --emit-bc=<arq>      Gera bitcode no arquivo informado\n";
+        std::cout << "  --opt=<O0|O1|O2|O3|Os|Oz>  Define o nivel de otimizacao (padrao: O0)\n";
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
         std::cout << "\nDica: você pode passar só o arquivo (sem flag) para rodar --check por padrão.\n";
         return 0;
     }
+
+    auto startsWith = [](const std::string& s, const char* pfx){ return s.rfind(pfx, 0) == 0; };
 
     // Se argv[1] NÃO é flag, tratamos como arquivo e assumimos modo --check
     if (!isFlag(mode)) {
@@ -84,6 +96,32 @@ int run(int argc, char** argv) {
         bool modeEmitOBJ = (mode == "--emit-obj" || mode.rfind("--emit-obj=", 0) == 0);
         bool modeRun = (mode == "--run");
         bool modeEmitEXE = (mode == "--emit-exe" || mode.rfind("--emit-exe=", 0) == 0);
+        bool modeEmitBC  = (mode == "--emit-bc"  || mode.rfind("--emit-bc=",  0) == 0);
+
+        // Trata --opt=... quando vier como primeira flag e combine com outra flag depois
+        bool consumedOptFirst = false;
+        if (startsWith(mode, "--opt=")) {
+            optLevel = mode.substr(std::string("--opt=").size());
+            if (optLevel.empty()) {
+                std::cerr << "error: nivel de otimizacao vazio\n";
+                return 1;
+            }
+            // Se houver uma segunda flag, trate-a como modo principal
+            if (argc < 3) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+            mode = argv[2];
+            consumedOptFirst = true;
+            optProvided = true;
+            // recalc modos
+            modeEmitLL = (mode == "--emit-ll" || mode == "--emit-llvm" ||
+                           startsWith(mode, "--emit-ll=") || startsWith(mode, "--emit-llvm="));
+            modeEmitOBJ = (mode == "--emit-obj" || startsWith(mode, "--emit-obj="));
+            modeRun = (mode == "--run");
+            modeEmitEXE = (mode == "--emit-exe" || startsWith(mode, "--emit-exe="));
+            modeEmitBC  = (mode == "--emit-bc"  || startsWith(mode, "--emit-bc="));
+        }
 
         if (modeEmitLL) {
             emitLL = true;
@@ -93,7 +131,7 @@ int run(int argc, char** argv) {
                 outPath = mode.substr(eq + 1);
             }
 
-            int idx = 2; // próximo argumento deve ser -o ou o arquivo de entrada
+            int idx = consumedOptFirst ? 3 : 2; // próximo argumento deve ser -o ou o arquivo de entrada
             if (argc <= idx) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
@@ -117,7 +155,7 @@ int run(int argc, char** argv) {
                 outObjPath = mode.substr(eq + 1);
             }
 
-            int idx = 2; // pode vir -o <arq> antes do arquivo de entrada
+            int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
             if (argc <= idx) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
@@ -140,7 +178,7 @@ int run(int argc, char** argv) {
                 outExePath = mode.substr(eq + 1);
             }
 
-            int idx = 2; // pode vir -o <arq> antes do arquivo de entrada
+            int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
             if (argc <= idx) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
@@ -155,22 +193,76 @@ int run(int argc, char** argv) {
             } else {
                 file = argv[idx];
             }
+        } else if (modeEmitBC) {
+            emitBC = true;
+            auto eq = mode.find('=');
+            if (eq != std::string::npos) {
+                outBCPath = mode.substr(eq + 1);
+            }
+
+            int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
+            if (argc <= idx) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+            if (std::string(argv[idx]) == "-o") {
+                if (argc < idx + 3) {
+                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
+                    return 1;
+                }
+                outBCPath = argv[idx + 1];
+                file      = argv[idx + 2];
+            } else {
+                file = argv[idx];
+            }
         } else if (modeRun) {
             runMode = true;
-            if (argc < 3) {
+            int idx = consumedOptFirst ? 3 : 2;
+            if (argc < idx+1) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
-            file = argv[2];
+            file = argv[idx];
         } else {
             // Demais modos esperam o arquivo em argv[2]
-            if (argc < 3) {
+            int idx = consumedOptFirst ? 3 : 2;
+            if (argc < idx+1) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
-            file = argv[2];
+            file = argv[idx];
         }
     }
+
+    // Helpers de otimização
+    auto parseOptLevel = [](const std::string& s, llvm::OptimizationLevel& out) -> bool {
+        using L = llvm::OptimizationLevel;
+        if (s == "O0") { out = L::O0; return true; }
+        if (s == "O1") { out = L::O1; return true; }
+        if (s == "O2") { out = L::O2; return true; }
+        if (s == "O3") { out = L::O3; return true; }
+        if (s == "Os") { out = L::Os; return true; }
+        if (s == "Oz") { out = L::Oz; return true; }
+        return false;
+    };
+    auto runOptimizations = [](llvm::Module& M, llvm::OptimizationLevel OL) {
+        using namespace llvm;
+        PassBuilder PB;
+        LoopAnalysisManager     LAM;
+        FunctionAnalysisManager FAM;
+        CGSCCAnalysisManager    CGAM;
+        ModuleAnalysisManager   MAM;
+
+        PB.registerModuleAnalyses(MAM);
+        PB.registerCGSCCAnalyses(CGAM);
+        PB.registerFunctionAnalyses(FAM);
+        PB.registerLoopAnalyses(LAM);
+        PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+        ModulePassManager MPM;
+        MPM = PB.buildPerModuleDefaultPipeline(OL);
+        MPM.run(M, MAM);
+    };
 
     std::string src = readFile(file);
     if (src.empty()) {
@@ -213,6 +305,23 @@ int run(int argc, char** argv) {
             return 1;
         }
 
+        // Otimização opcional
+        llvm::OptimizationLevel OL;
+        if (optProvided) {
+            if (!parseOptLevel(optLevel, OL)) {
+                std::cerr << "error: nivel de otimizacao invalido: " << optLevel
+                          << " (use O0,O1,O2,O3,Os,Oz)\n";
+                return 1;
+            }
+            if (!module->getFunctionList().empty()) {
+                runOptimizations(*module, OL);
+                if (llvm::verifyModule(*module, &llvm::errs())) {
+                    std::cerr << "error: IR invalido apos otimizacao\n";
+                    return 1;
+                }
+            }
+        }
+
         module->print(llvm::outs(), nullptr);
         return 0;
     } else if (mode == "--check") {
@@ -241,6 +350,25 @@ int run(int argc, char** argv) {
             return 1;
         }
 
+        // Otimização opcional
+        {
+            llvm::OptimizationLevel OL;
+            if (optProvided) {
+                if (!parseOptLevel(optLevel, OL)) {
+                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
+                              << " (use O0,O1,O2,O3,Os,Oz)\n";
+                    return 1;
+                }
+                if (!module->getFunctionList().empty()) {
+                    runOptimizations(*module, OL);
+                    if (llvm::verifyModule(*module, &llvm::errs())) {
+                        std::cerr << "error: IR invalido apos otimizacao\n";
+                        return 1;
+                    }
+                }
+            }
+        }
+
         // Sem -o (e sem --emit-ll=...), salvar em <input>.ll
         if (outPath.empty()) {
             auto pos = file.rfind('.');
@@ -257,6 +385,60 @@ int run(int argc, char** argv) {
         module->print(out, nullptr);
         out.flush();
         std::cout << "OK: IR salvo em " << outPath << "\n";
+        return 0;
+    }
+
+    if (emitBC) {
+        // Semântica antes de gerar IR
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+
+        Codegen cg("mycc_module", diag);
+        auto module = cg.run(prog.get());
+        if (diag.hadError || !module) return 1;
+
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR invalido\n";
+            return 1;
+        }
+
+        // Otimização opcional
+        {
+            llvm::OptimizationLevel OL;
+            if (optProvided) {
+                if (!parseOptLevel(optLevel, OL)) {
+                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
+                              << " (use O0,O1,O2,O3,Os,Oz)\n";
+                    return 1;
+                }
+                if (!module->getFunctionList().empty()) {
+                    runOptimizations(*module, OL);
+                    if (llvm::verifyModule(*module, &llvm::errs())) {
+                        std::cerr << "error: IR invalido apos otimizacao\n";
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        if (outBCPath.empty()) {
+            auto pos = file.rfind('.');
+            std::string base = (pos == std::string::npos) ? file : file.substr(0, pos);
+            outBCPath = base + ".bc";
+        }
+
+        std::error_code ec;
+        llvm::raw_fd_ostream out(outBCPath, ec, llvm::sys::fs::OF_None);
+        if (ec) {
+            std::cerr << outBCPath << ": error: " << ec.message() << "\n";
+            return 1;
+        }
+        llvm::WriteBitcodeToFile(*module, out);
+        out.flush();
+        std::cout << "OK: bitcode salvo em " << outBCPath << "\n";
         return 0;
     }
 
@@ -305,6 +487,25 @@ int run(int argc, char** argv) {
         );
 
         module->setDataLayout(TM->createDataLayout());
+
+        // Otimização opcional
+        {
+            llvm::OptimizationLevel OL;
+            if (optProvided) {
+                if (!parseOptLevel(optLevel, OL)) {
+                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
+                              << " (use O0,O1,O2,O3,Os,Oz)\n";
+                    return 1;
+                }
+                if (!module->getFunctionList().empty()) {
+                    runOptimizations(*module, OL);
+                    if (llvm::verifyModule(*module, &llvm::errs())) {
+                        std::cerr << "error: IR invalido apos otimizacao\n";
+                        return 1;
+                    }
+                }
+            }
+        }
 
         // Caminho de saída padrão (.o ao lado do .my)
         if (outObjPath.empty()) {
@@ -378,6 +579,25 @@ int run(int argc, char** argv) {
             target->createTargetMachine(TT, "generic", "", opt, rm)
         );
         module->setDataLayout(TM->createDataLayout());
+
+        // Otimização opcional
+        {
+            llvm::OptimizationLevel OL;
+            if (optProvided) {
+                if (!parseOptLevel(optLevel, OL)) {
+                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
+                              << " (use O0,O1,O2,O3,Os,Oz)\n";
+                    return 1;
+                }
+                if (!module->getFunctionList().empty()) {
+                    runOptimizations(*module, OL);
+                    if (llvm::verifyModule(*module, &llvm::errs())) {
+                        std::cerr << "error: IR invalido apos otimizacao\n";
+                        return 1;
+                    }
+                }
+            }
+        }
 
         // 5) Caminhos: .o temporário e exe final
         std::string base = file;
@@ -486,6 +706,25 @@ int run(int argc, char** argv) {
         if (llvm::verifyModule(*module, &llvm::errs())) {
             std::cerr << "error: IR invalido\n";
             return 1;
+        }
+
+        // Otimização opcional
+        {
+            llvm::OptimizationLevel OL;
+            if (optLevel.rfind("O", 0) == 0) {
+                if (!parseOptLevel(optLevel, OL)) {
+                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
+                              << " (use O0,O1,O2,O3,Os,Oz)\n";
+                    return 1;
+                }
+                if (!module->getFunctionList().empty()) {
+                    runOptimizations(*module, OL);
+                    if (llvm::verifyModule(*module, &llvm::errs())) {
+                        std::cerr << "error: IR invalido apos otimizacao\n";
+                        return 1;
+                    }
+                }
+            }
         }
 
         // 3) Arquivo temporario .ll

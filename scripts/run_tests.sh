@@ -130,5 +130,41 @@ else
 fi
 
 echo
+
+# Casos extras: --opt e --emit-bc
+echo "▶︎ Teste extra: --emit-bc com otimização (deve passar)"
+echo "──> Rodando: $ROOT/tests/19_opt_emit_bc_ok.my (esperado: pass --opt=O2 --emit-bc)"
+"$BIN" --opt=O2 --emit-bc -o /tmp/t19.bc "$ROOT/tests/19_opt_emit_bc_ok.my"
+rc=$?
+if [[ $rc -eq 0 ]]; then
+  if [[ -s /tmp/t19.bc ]]; then
+    echo "✅ OK  : --emit-bc O2 /tmp/t19.bc"
+    # opcional: desassemblar se disponível
+    if command -v llvm-dis >/dev/null 2>&1; then
+      llvm-dis -o /tmp/t19.ll /tmp/t19.bc && echo "   llvm-dis OK (bitcode legível)"
+    fi
+    pass=$((pass+1))
+  else
+    echo "❌ FAIL: /tmp/t19.bc ausente ou vazio"
+    fail=$((fail+1))
+  fi
+else
+  echo "❌ FAIL: --emit-bc O2"
+  fail=$((fail+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --opt nivel inválido (deve falhar)"
+"$BIN" --opt=banana --emit-ll -o /tmp/t108.ll "$ROOT/tests/108_opt_invalid_level.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+  echo "✅ OK(F): --opt=banana falhou como esperado"
+  pass=$((pass+1))
+else
+  echo "❌ FAIL: deveria falhar com --opt=banana"
+  fail=$((fail+1))
+fi
+
+echo
 echo "Resumo: pass=$pass fail=$fail"
 [[ $fail -eq 0 ]] || exit 1
