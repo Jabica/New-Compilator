@@ -75,7 +75,7 @@ build target_parser_gen: phony
 build cmake_object_order_depends_target_mycc: phony || .
 
 build CMakeFiles/mycc.dir/src/cli.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users/jabour/VSCODE/New$ Compilator/src/cli.cpp || cmake_object_order_depends_target_mycc
-  DEFINES = -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\""
+  DEFINES = -DMYCC_BUILD_DIR="\"/Users/jabour/VSCODE/New Compilator/build\"" -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\"" -DMYCC_SOURCE_DIR="\"/Users/jabour/VSCODE/New Compilator\""
   DEP_FILE = CMakeFiles/mycc.dir/src/cli.cpp.o.d
   FLAGS = -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   INCLUDES = -I"/Users/jabour/VSCODE/New Compilator/include" -I"/Users/jabour/VSCODE/New Compilator/src" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include
@@ -85,7 +85,7 @@ build CMakeFiles/mycc.dir/src/cli.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users/ja
   TARGET_PDB = libmycc.pdb
 
 build CMakeFiles/mycc.dir/src/lexer.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users/jabour/VSCODE/New$ Compilator/src/lexer.cpp || cmake_object_order_depends_target_mycc
-  DEFINES = -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\""
+  DEFINES = -DMYCC_BUILD_DIR="\"/Users/jabour/VSCODE/New Compilator/build\"" -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\"" -DMYCC_SOURCE_DIR="\"/Users/jabour/VSCODE/New Compilator\""
   DEP_FILE = CMakeFiles/mycc.dir/src/lexer.cpp.o.d
   FLAGS = -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   INCLUDES = -I"/Users/jabour/VSCODE/New Compilator/include" -I"/Users/jabour/VSCODE/New Compilator/src" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include
@@ -95,7 +95,7 @@ build CMakeFiles/mycc.dir/src/lexer.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users/
   TARGET_PDB = libmycc.pdb
 
 build CMakeFiles/mycc.dir/src/parser.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users/jabour/VSCODE/New$ Compilator/src/parser.cpp || cmake_object_order_depends_target_mycc
-  DEFINES = -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\""
+  DEFINES = -DMYCC_BUILD_DIR="\"/Users/jabour/VSCODE/New Compilator/build\"" -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\"" -DMYCC_SOURCE_DIR="\"/Users/jabour/VSCODE/New Compilator\""
   DEP_FILE = CMakeFiles/mycc.dir/src/parser.cpp.o.d
   FLAGS = -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   INCLUDES = -I"/Users/jabour/VSCODE/New Compilator/include" -I"/Users/jabour/VSCODE/New Compilator/src" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include
@@ -105,7 +105,7 @@ build CMakeFiles/mycc.dir/src/parser.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users
   TARGET_PDB = libmycc.pdb
 
 build CMakeFiles/mycc.dir/src/codegen.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users/jabour/VSCODE/New$ Compilator/src/codegen.cpp || cmake_object_order_depends_target_mycc
-  DEFINES = -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\""
+  DEFINES = -DMYCC_BUILD_DIR="\"/Users/jabour/VSCODE/New Compilator/build\"" -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\"" -DMYCC_SOURCE_DIR="\"/Users/jabour/VSCODE/New Compilator\""
   DEP_FILE = CMakeFiles/mycc.dir/src/codegen.cpp.o.d
   FLAGS = -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   INCLUDES = -I"/Users/jabour/VSCODE/New Compilator/include" -I"/Users/jabour/VSCODE/New Compilator/src" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include
@@ -115,7 +115,7 @@ build CMakeFiles/mycc.dir/src/codegen.cpp.o: CXX_COMPILER__mycc_unscanned_ /User
   TARGET_PDB = libmycc.pdb
 
 build CMakeFiles/mycc.dir/src/diagnostics.cpp.o: CXX_COMPILER__mycc_unscanned_ /Users/jabour/VSCODE/New$ Compilator/src/diagnostics.cpp || cmake_object_order_depends_target_mycc
-  DEFINES = -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\""
+  DEFINES = -DMYCC_BUILD_DIR="\"/Users/jabour/VSCODE/New Compilator/build\"" -DMYCC_RUNTIME_LIB="\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\"" -DMYCC_SOURCE_DIR="\"/Users/jabour/VSCODE/New Compilator\""
   DEP_FILE = CMakeFiles/mycc.dir/src/diagnostics.cpp.o.d
   FLAGS = -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   INCLUDES = -I"/Users/jabour/VSCODE/New Compilator/include" -I"/Users/jabour/VSCODE/New Compilator/src" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include
@@ -151,6 +151,7 @@ build libmycc.a: CXX_STATIC_LIBRARY_LINKER__mycc_ CMakeFiles/mycc.dir/src/cli.cp
 build cmake_object_order_depends_target_mycc_runtime: phony || .
 
 build CMakeFiles/mycc_runtime.dir/src/runtime.c.o: C_COMPILER__mycc_runtime_unscanned_ /Users/jabour/VSCODE/New$ Compilator/src/runtime.c || cmake_object_order_depends_target_mycc_runtime
+  DEFINES = -DMYCC_BUILD_DIR="\"/Users/jabour/VSCODE/New Compilator/build\"" -DMYCC_SOURCE_DIR="\"/Users/jabour/VSCODE/New Compilator\""
   DEP_FILE = CMakeFiles/mycc_runtime.dir/src/runtime.c.o.d
   FLAGS = -std=gnu11 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   INCLUDES = -isystem /opt/homebrew/Cellar/llvm/21.1.0/include
@@ -186,6 +187,7 @@ build libmycc_runtime.a: C_STATIC_LIBRARY_LINKER__mycc_runtime_ CMakeFiles/mycc_
 build cmake_object_order_depends_target_mycc_cli: phony || cmake_object_order_depends_target_mycc
 
 build CMakeFiles/mycc_cli.dir/src/main.cpp.o: CXX_COMPILER__mycc_cli_unscanned_ /Users/jabour/VSCODE/New$ Compilator/src/main.cpp || cmake_object_order_depends_target_mycc_cli
+  DEFINES = -DMYCC_BUILD_DIR="\"/Users/jabour/VSCODE/New Compilator/build\"" -DMYCC_SOURCE_DIR="\"/Users/jabour/VSCODE/New Compilator\""
   DEP_FILE = CMakeFiles/mycc_cli.dir/src/main.cpp.o.d
   FLAGS = -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   INCLUDES = -I"/Users/jabour/VSCODE/New Compilator/include" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include
