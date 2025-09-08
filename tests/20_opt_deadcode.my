@@ -1,0 +1,9 @@
+func foo(x: inteiro): inteiro {
+  var y: inteiro = x + 10;
+  retorna x;
+}
+
+func main(): inteiro {
+  retorna foo(1);
+}
+

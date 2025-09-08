@@ -9,7 +9,9 @@
 #include <llvm/Support/FileSystem.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Passes/StandardInstrumentations.h>
 #include <llvm/IR/PassManager.h>
+#include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
 #include <fstream>
 #include <sstream>
@@ -57,8 +59,31 @@ int run(int argc, char** argv) {
     std::string outAsmPath;
     bool emitBC = false;
     std::string outBCPath;
-    std::string optLevel = "O0"; // padrão
-    bool optProvided = false;     // se o usuário passou --opt
+    bool emitLLOpt = false;
+    std::string outOptLLPath;
+    std::string optLevel = "O0";      // padrão
+    bool optProvided = false;          // se o usuário passou --opt
+    std::string optPipeline;           // pipeline textual custom
+
+    // Pre-scan: capture opções de otimização em qualquer posição
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a.rfind("--opt=", 0) == 0) {
+            optLevel = a.substr(std::string("--opt=").size());
+            optProvided = true;
+        } else if (a == "--opt") {
+            optProvided = true; // mantém O0
+        } else if (a.rfind("--opt-pipeline=", 0) == 0) {
+            optPipeline = a.substr(std::string("--opt-pipeline=").size());
+            if (optPipeline.empty()) {
+                std::cerr << "error: --opt-pipeline requer um texto de pipeline\n";
+                return 1;
+            }
+        } else if (a == "--opt-pipeline") {
+            std::cerr << "error: falta valor para --opt-pipeline (use --opt-pipeline=<texto>)\n";
+            return 1;
+        }
+    }
 
     if (mode == "--help") {
         std::cout << "mycc-pt - Compilador Educacional\n";
@@ -80,7 +105,10 @@ int run(int argc, char** argv) {
         std::cout << "  --emit-asm=<arq>     Gera assembly textual no arquivo informado\n";
         std::cout << "  --emit-bc            Gera bitcode LLVM (.bc) (sem -o: <input>.bc)\n";
         std::cout << "  --emit-bc=<arq>      Gera bitcode no arquivo informado\n";
-        std::cout << "  --opt=<O0|O1|O2|O3|Os|Oz>  Define o nivel de otimizacao (padrao: O0)\n";
+        std::cout << "  --emit-ll-opt        Salva IR otimizado em <input>.opt.ll (ou -o <arq>)\n";
+        std::cout << "  --emit-ll-opt=<arq>  Salva IR otimizado no arquivo informado\n";
+        std::cout << "  --opt[=O0|O1|O2|O3|Os|Oz]   Define o nivel de otimizacao (padrao: O0)\n";
+        std::cout << "  --opt-pipeline=<texto>      Pipeline textual personalizado (PassBuilder)\n";
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
         std::cout << "\nDica: você pode passar só o arquivo (sem flag) para rodar --check por padrão.\n";
@@ -100,6 +128,7 @@ int run(int argc, char** argv) {
         bool modeEmitOBJ = (mode == "--emit-obj" || mode.rfind("--emit-obj=", 0) == 0);
         bool modeRun = (mode == "--run");
         bool modeEmitEXE = (mode == "--emit-exe" || mode.rfind("--emit-exe=", 0) == 0);
+        bool modeEmitLLOpt = (mode == "--emit-ll-opt" || mode.rfind("--emit-ll-opt=", 0) == 0);
         bool modeEmitASM = (mode == "--emit-asm" || mode.rfind("--emit-asm=", 0) == 0);
         bool modeEmitBC  = (mode == "--emit-bc"  || mode.rfind("--emit-bc=",  0) == 0);
 
@@ -125,6 +154,7 @@ int run(int argc, char** argv) {
             modeEmitOBJ = (mode == "--emit-obj" || startsWith(mode, "--emit-obj="));
             modeRun = (mode == "--run");
             modeEmitEXE = (mode == "--emit-exe" || startsWith(mode, "--emit-exe="));
+            modeEmitLLOpt = (mode == "--emit-ll-opt" || startsWith(mode, "--emit-ll-opt="));
             modeEmitASM = (mode == "--emit-asm" || startsWith(mode, "--emit-asm="));
             modeEmitBC  = (mode == "--emit-bc"  || startsWith(mode, "--emit-bc="));
         }
@@ -221,6 +251,50 @@ int run(int argc, char** argv) {
             } else {
                 file = argv[idx];
             }
+        } else if (modeEmitLLOpt) {
+            emitLLOpt = true;
+            auto eq = mode.find('=');
+            if (eq != std::string::npos) {
+                outOptLLPath = mode.substr(eq + 1);
+            }
+
+            int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
+            if (argc <= idx) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+            if (std::string(argv[idx]) == "-o") {
+                if (argc < idx + 3) {
+                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
+                    return 1;
+                }
+                outOptLLPath = argv[idx + 1];
+                // procurar o primeiro argumento não-flag após -o <arq>
+                bool found = false;
+                for (int j = idx + 2; j < argc; ++j) {
+                    std::string a = argv[j];
+                    if (a == "-o") { ++j; continue; }
+                    if (a.rfind("--", 0) == 0) continue;
+                    file = a; found = true; break;
+                }
+                if (!found) {
+                    std::cerr << "error: faltou o caminho do arquivo .my\n";
+                    return 1;
+                }
+            } else {
+                // sem -o: pegue o primeiro não-flag
+                bool found = false;
+                for (int j = idx; j < argc; ++j) {
+                    std::string a = argv[j];
+                    if (a == "-o") { ++j; continue; }
+                    if (a.rfind("--", 0) == 0) continue;
+                    file = a; found = true; break;
+                }
+                if (!found) {
+                    std::cerr << "error: faltou o caminho do arquivo .my\n";
+                    return 1;
+                }
+            }
         } else if (modeEmitASM) {
             emitASM = true;
             auto eq = mode.find('=');
@@ -262,24 +336,21 @@ int run(int argc, char** argv) {
         }
     }
 
-    // Helpers de otimização
-    auto parseOptLevel = [](const std::string& s, llvm::OptimizationLevel& out) -> bool {
-        using L = llvm::OptimizationLevel;
-        if (s == "O0") { out = L::O0; return true; }
-        if (s == "O1") { out = L::O1; return true; }
-        if (s == "O2") { out = L::O2; return true; }
-        if (s == "O3") { out = L::O3; return true; }
-        if (s == "Os") { out = L::Os; return true; }
-        if (s == "Oz") { out = L::Oz; return true; }
-        return false;
-    };
-    auto runOptimizations = [](llvm::Module& M, llvm::OptimizationLevel OL) {
+    // Helper de otimização: usa OptPipeline textual se fornecida; caso contrário, OptLevel
+    auto optimizeModule = [](llvm::Module& M,
+                             llvm::TargetMachine* TM,
+                             const std::string& OptLevel,
+                             const std::string& OptPipeline,
+                             std::string& Err) -> bool {
         using namespace llvm;
-        PassBuilder PB;
+
         LoopAnalysisManager     LAM;
         FunctionAnalysisManager FAM;
         CGSCCAnalysisManager    CGAM;
         ModuleAnalysisManager   MAM;
+
+        PassBuilder PB(TM);
+        // (Opcional) instrumentações/AA: omitidos para simplicidade/compatibilidade
 
         PB.registerModuleAnalyses(MAM);
         PB.registerCGSCCAnalyses(CGAM);
@@ -288,8 +359,26 @@ int run(int argc, char** argv) {
         PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
         ModulePassManager MPM;
-        MPM = PB.buildPerModuleDefaultPipeline(OL);
+        if (!OptPipeline.empty()) {
+            if (auto ErrE = PB.parsePassPipeline(MPM, OptPipeline)) {
+                Err = "pipeline invalido em --opt-pipeline";
+                return false;
+            }
+        } else {
+            OptimizationLevel OL = OptimizationLevel::O0;
+            if      (OptLevel == "O0") OL = OptimizationLevel::O0;
+            else if (OptLevel == "O1") OL = OptimizationLevel::O1;
+            else if (OptLevel == "O2") OL = OptimizationLevel::O2;
+            else if (OptLevel == "O3") OL = OptimizationLevel::O3;
+            else if (OptLevel == "Os") OL = OptimizationLevel::Os;
+            else if (OptLevel == "Oz") OL = OptimizationLevel::Oz;
+            else { Err = "nivel de otimizacao invalido em --opt (use O0|O1|O2|O3|Os|Oz)"; return false; }
+
+            MPM = PB.buildPerModuleDefaultPipeline(OL);
+        }
+
         MPM.run(M, MAM);
+        return true;
     };
 
     std::string src = readFile(file);
@@ -334,19 +423,12 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional
-        llvm::OptimizationLevel OL;
-        if (optProvided) {
-            if (!parseOptLevel(optLevel, OL)) {
-                std::cerr << "error: nivel de otimizacao invalido: " << optLevel
-                          << " (use O0,O1,O2,O3,Os,Oz)\n";
-                return 1;
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1;
             }
-            if (!module->getFunctionList().empty()) {
-                runOptimizations(*module, OL);
-                if (llvm::verifyModule(*module, &llvm::errs())) {
-                    std::cerr << "error: IR invalido apos otimizacao\n";
-                    return 1;
-                }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1;
             }
         }
 
@@ -379,22 +461,11 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional
-        {
-            llvm::OptimizationLevel OL;
-            if (optProvided) {
-                if (!parseOptLevel(optLevel, OL)) {
-                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
-                              << " (use O0,O1,O2,O3,Os,Oz)\n";
-                    return 1;
-                }
-                if (!module->getFunctionList().empty()) {
-                    runOptimizations(*module, OL);
-                    if (llvm::verifyModule(*module, &llvm::errs())) {
-                        std::cerr << "error: IR invalido apos otimizacao\n";
-                        return 1;
-                    }
-                }
-            }
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
         }
 
         // Sem -o (e sem --emit-ll=...), salvar em <input>.ll
@@ -416,6 +487,51 @@ int run(int argc, char** argv) {
         return 0;
     }
 
+    if (emitLLOpt) {
+        // Semântica antes de gerar IR
+        {
+            SemanticChecker sem(diag);
+            bool ok = sem.run(prog.get());
+            if (!ok || diag.hadError) return 1;
+        }
+
+        Codegen cg("mycc_module", diag);
+        auto module = cg.run(prog.get());
+        if (diag.hadError || !module) return 1;
+
+        // Verifica IR
+        if (llvm::verifyModule(*module, &llvm::errs())) {
+            std::cerr << "error: IR inválido gerado (verifyModule)\n";
+            return 1;
+        }
+
+        // Otimização obrigatória (usa pipeline textual se fornecida; caso contrário, nível)
+        if (!optPipeline.empty() || optProvided || optLevel != "O0") {
+            std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
+        }
+
+        // Caminho padrão <input>.opt.ll
+        if (outOptLLPath.empty()) {
+            auto pos = file.rfind('.');
+            std::string base = (pos == std::string::npos) ? file : file.substr(0, pos);
+            outOptLLPath = base + ".opt.ll";
+        }
+
+        std::error_code ec;
+        llvm::raw_fd_ostream out(outOptLLPath, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            std::cerr << outOptLLPath << ": error: " << ec.message() << "\n";
+            return 1;
+        }
+        module->print(out, nullptr);
+        out.flush();
+        std::cout << "OK: IR otimizado salvo em " << outOptLLPath << "\n";
+        return 0;
+    }
+
     if (emitBC) {
         // Semântica antes de gerar IR
         {
@@ -434,22 +550,11 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional
-        {
-            llvm::OptimizationLevel OL;
-            if (optProvided) {
-                if (!parseOptLevel(optLevel, OL)) {
-                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
-                              << " (use O0,O1,O2,O3,Os,Oz)\n";
-                    return 1;
-                }
-                if (!module->getFunctionList().empty()) {
-                    runOptimizations(*module, OL);
-                    if (llvm::verifyModule(*module, &llvm::errs())) {
-                        std::cerr << "error: IR invalido apos otimizacao\n";
-                        return 1;
-                    }
-                }
-            }
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
         }
 
         if (outBCPath.empty()) {
@@ -487,25 +592,6 @@ int run(int argc, char** argv) {
             return 1;
         }
 
-        // Otimização opcional
-        {
-            llvm::OptimizationLevel OL;
-            if (optProvided) {
-                if (!parseOptLevel(optLevel, OL)) {
-                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
-                              << " (use O0,O1,O2,O3,Os,Oz)\n";
-                    return 1;
-                }
-                if (!module->getFunctionList().empty()) {
-                    runOptimizations(*module, OL);
-                    if (llvm::verifyModule(*module, &llvm::errs())) {
-                        std::cerr << "error: IR invalido apos otimizacao\n";
-                        return 1;
-                    }
-                }
-            }
-        }
-
         // Inicializa alvo nativo
         static bool inited = false;
         if (!inited) {
@@ -532,6 +618,22 @@ int run(int argc, char** argv) {
             target->createTargetMachine(TT, "generic", "", opt, rm)
         );
         module->setDataLayout(TM->createDataLayout());
+
+        // Otimização opcional (com TM disponível)
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, TM.get(), optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
+        }
+
+        // Otimização opcional (com TM disponível)
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, TM.get(), optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
+        }
 
         // Caminho de saída padrão (.s ao lado do .my)
         if (outAsmPath.empty()) {
@@ -606,23 +708,12 @@ int run(int argc, char** argv) {
 
         module->setDataLayout(TM->createDataLayout());
 
-        // Otimização opcional
-        {
-            llvm::OptimizationLevel OL;
-            if (optProvided) {
-                if (!parseOptLevel(optLevel, OL)) {
-                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
-                              << " (use O0,O1,O2,O3,Os,Oz)\n";
-                    return 1;
-                }
-                if (!module->getFunctionList().empty()) {
-                    runOptimizations(*module, OL);
-                    if (llvm::verifyModule(*module, &llvm::errs())) {
-                        std::cerr << "error: IR invalido apos otimizacao\n";
-                        return 1;
-                    }
-                }
-            }
+        // Otimização opcional (com TM disponível)
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, TM.get(), optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
         }
 
         // Caminho de saída padrão (.o ao lado do .my)
@@ -699,22 +790,11 @@ int run(int argc, char** argv) {
         module->setDataLayout(TM->createDataLayout());
 
         // Otimização opcional
-        {
-            llvm::OptimizationLevel OL;
-            if (optProvided) {
-                if (!parseOptLevel(optLevel, OL)) {
-                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
-                              << " (use O0,O1,O2,O3,Os,Oz)\n";
-                    return 1;
-                }
-                if (!module->getFunctionList().empty()) {
-                    runOptimizations(*module, OL);
-                    if (llvm::verifyModule(*module, &llvm::errs())) {
-                        std::cerr << "error: IR invalido apos otimizacao\n";
-                        return 1;
-                    }
-                }
-            }
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
         }
 
         // 5) Caminhos: .o temporário e exe final
@@ -829,22 +909,11 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional
-        {
-            llvm::OptimizationLevel OL;
-            if (optLevel.rfind("O", 0) == 0) {
-                if (!parseOptLevel(optLevel, OL)) {
-                    std::cerr << "error: nivel de otimizacao invalido: " << optLevel
-                              << " (use O0,O1,O2,O3,Os,Oz)\n";
-                    return 1;
-                }
-                if (!module->getFunctionList().empty()) {
-                    runOptimizations(*module, OL);
-                    if (llvm::verifyModule(*module, &llvm::errs())) {
-                        std::cerr << "error: IR invalido apos otimizacao\n";
-                        return 1;
-                    }
-                }
-            }
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+            std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
+                std::cerr << "error: " << e << "\n"; return 1; }
+            if (llvm::verifyModule(*module, &llvm::errs())) {
+                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
         }
 
         // 3) Arquivo temporario .ll

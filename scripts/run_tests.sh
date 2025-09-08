@@ -166,6 +166,65 @@ else
 fi
 
 echo
+echo "▶︎ Teste extra: --emit-ll-opt constfold (deve passar)"
+echo "──> Rodando: $ROOT/tests/19_opt_constfold.my (esperado: pass-opt)"
+/bin/rm -f /tmp/t19.ll
+"$BIN" --emit-ll-opt -o /tmp/t19.ll --opt=O2 "$ROOT/tests/19_opt_constfold.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 || ! -s /tmp/t19.ll ]]; then
+  echo "❌ FAIL: $ROOT/tests/19_opt_constfold.my (nao gerou .ll otimizado)"
+  fail=$((fail+1))
+else
+  if grep -q "add i32 2, 3" /tmp/t19.ll; then
+    echo "❌ FAIL: $ROOT/tests/19_opt_constfold.my (constfold nao aplicado)"
+    fail=$((fail+1))
+  else
+    echo "✅ OK  : $ROOT/tests/19_opt_constfold.my"
+    pass=$((pass+1))
+  fi
+fi
+
+echo
+echo "▶︎ Teste extra: --emit-ll-opt deadcode (deve passar)"
+echo "──> Rodando: $ROOT/tests/20_opt_deadcode.my (esperado: pass-opt)"
+/bin/rm -f /tmp/t20.ll
+"$BIN" --emit-ll-opt -o /tmp/t20.ll --opt=O2 "$ROOT/tests/20_opt_deadcode.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 || ! -s /tmp/t20.ll ]]; then
+  echo "❌ FAIL: $ROOT/tests/20_opt_deadcode.my (nao gerou .ll otimizado)"
+  fail=$((fail+1))
+else
+  echo "✅ OK  : $ROOT/tests/20_opt_deadcode.my"
+  pass=$((pass+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --opt nivel invalido (deve falhar)"
+echo "──> Rodando: $ROOT/tests/109_opt_bad_level.my (esperado: fail)"
+"$BIN" --emit-ll-opt --opt=O9 "$ROOT/tests/109_opt_bad_level.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -eq 0 ]]; then
+  echo "❌ FAIL: $ROOT/tests/109_opt_bad_level.my (deveria falhar)"
+  fail=$((fail+1))
+else
+  echo "✅ OK(F): $ROOT/tests/109_opt_bad_level.my (falhou como esperado)"
+  pass=$((pass+1))
+fi
+
+echo
+echo "▶︎ Teste extra: --opt-pipeline invalido (deve falhar)"
+echo "──> Rodando: $ROOT/tests/110_opt_bad_pipeline.my (esperado: fail)"
+"$BIN" --emit-ll-opt --opt-pipeline="not-a-real-pass" "$ROOT/tests/110_opt_bad_pipeline.my" >/dev/null 2>&1
+rc=$?
+if [[ $rc -eq 0 ]]; then
+  echo "❌ FAIL: $ROOT/tests/110_opt_bad_pipeline.my (deveria falhar)"
+  fail=$((fail+1))
+else
+  echo "✅ OK(F): $ROOT/tests/110_opt_bad_pipeline.my (falhou como esperado)"
+  pass=$((pass+1))
+fi
+
+echo
 echo "▶︎ Teste extra: --emit-asm (deve passar)"
 echo "──> Rodando: $ROOT/tests/16_emit_asm_basic.my (esperado: pass --emit-asm)"
 "$BIN" --emit-asm -o /tmp/t16.s "$ROOT/tests/16_emit_asm_basic.my" >/dev/null 2>&1
