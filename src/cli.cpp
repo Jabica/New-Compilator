@@ -794,6 +794,8 @@ int run(int argc, char** argv) {
             if (!sysroot.empty()) {
                 cmd += " -isysroot " + shellQuote(sysroot);
             }
+            // Alinha a versão mínima do macOS ao alvo das libs LLVM (evita warnings)
+            cmd += " -mmacosx-version-min=15.0";
         }
 #endif
 

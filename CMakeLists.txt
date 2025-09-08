@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(mycc-pt VERSION 0.1 LANGUAGES C CXX)
 
-# Não force a versão de deployment do macOS; use a do toolchain local
-# Para fixar manualmente, exporte CMAKE_OSX_DEPLOYMENT_TARGET no ambiente.
+# Alinhar o deployment target ao LLVM instalado (evita warnings de "newer macOS version")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -64,7 +64,7 @@ llvm_map_components_to_libnames(LLVM_LIBS
 )
 
 # Linke LLVM na biblioteca (se a lib usa LLVM diretamente)
-target_link_libraries(mycc PRIVATE ${LLVM_LIBS})
+target_link_libraries(mycc PUBLIC ${LLVM_LIBS})
 
 # Expor caminho absoluto da lib do runtime para o CLI invocar o linker externo
 set(MYCC_RUNTIME_LIB "${CMAKE_BINARY_DIR}/libmycc_runtime.a")
@@ -72,7 +72,7 @@ target_compile_definitions(mycc PRIVATE MYCC_RUNTIME_LIB="${MYCC_RUNTIME_LIB}")
 
 # === EXECUTÁVEL ===
 add_executable(mycc_cli src/main.cpp)
-target_link_libraries(mycc_cli PRIVATE mycc ${LLVM_LIBS})
+target_link_libraries(mycc_cli PRIVATE mycc)
 
 # Instalação
 install(TARGETS mycc mycc_cli
