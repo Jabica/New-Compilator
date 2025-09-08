@@ -1,5 +1,4 @@
-funcao principal(): inteiro {
-    variavel x: inteiro = 5;
-    variavel y: inteiro = 10;
-    retorna x + 2 * 3 - (y / 2) == 7;
+func main(): inteiro {
+  retorna 0;
 }
+

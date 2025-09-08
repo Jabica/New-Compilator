@@ -331,4 +331,11 @@ fi
 
 echo
 echo "Resumo: pass=$pass fail=$fail"
+
+# Smoke tests de otimização (não afeta o rc geral)
+if [[ -x "$ROOT/scripts/run_opt_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_opt_tests.sh" || true
+fi
+
 [[ $fail -eq 0 ]] || exit 1
