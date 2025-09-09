@@ -903,62 +903,47 @@ void Codegen::emitSwitch(SwitchStmt* s, Scope& scope) {
     llvm::Function* F = builder->GetInsertBlock()->getParent();
 
     // END block
-    auto* endBB = llvm::BasicBlock::Create(ctx, "switch.end");
-
-    // Prepare case blocks
-    std::vector<std::pair<int, llvm::BasicBlock*>> caseBBs;
-    caseBBs.reserve(s->cases.size());
-    for (auto& c : s->cases) {
-        auto* bb = llvm::BasicBlock::Create(ctx, std::string("switch.case.") + std::to_string(c.value));
-        caseBBs.emplace_back(c.value, bb);
-    }
-    llvm::BasicBlock* defaultBB = s->deflt ? llvm::BasicBlock::Create(ctx, "switch.default") : endBB;
+    auto* endBB = llvm::BasicBlock::Create(ctx, "switch.end", F);
 
     // Scrutinee to i32
     llvm::Value* scr = emitExpr(s->scrutinee.get(), scope);
     if (!scr->getType()->isIntegerTy(32)) scr = builder->CreateZExtOrTrunc(scr, llvm::Type::getInt32Ty(ctx), "switch.scr");
 
-    // Chain of tests
-    llvm::BasicBlock* nextTestBB = nullptr;
-    for (size_t i=0;i<caseBBs.size();++i) {
-        auto* testBB = llvm::BasicBlock::Create(ctx, std::string("switch.test.")+std::to_string(i), F);
-        if (i==0) builder->CreateBr(testBB);
-        else      F->insert(F->end(), testBB);
-        builder->SetInsertPoint(testBB);
+    // Prepare case and default blocks
+    std::vector<std::pair<int, llvm::BasicBlock*>> caseBBs;
+    caseBBs.reserve(s->cases.size());
+    for (auto& c : s->cases) {
+        auto* bb = llvm::BasicBlock::Create(ctx, std::string("switch.case.") + std::to_string(c.value), F);
+        caseBBs.emplace_back(c.value, bb);
+    }
+    llvm::BasicBlock* defaultBB = s->deflt ? llvm::BasicBlock::Create(ctx, "switch.default", F) : endBB;
 
-        auto [val, caseBB] = caseBBs[i];
-        llvm::Value* cval = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), val);
-        auto* cmp = builder->CreateICmpEQ(scr, cval, "switch.cmp");
-        nextTestBB = (i+1<caseBBs.size()) ? llvm::BasicBlock::Create(ctx, std::string("switch.test.")+std::to_string(i+1))
-                                          : defaultBB;
-        builder->CreateCondBr(cmp, caseBB, nextTestBB);
-        if (nextTestBB != defaultBB) F->insert(F->end(), nextTestBB);
+    // Create LLVM 'switch' dispatch
+    auto* swi = builder->CreateSwitch(scr, defaultBB, (unsigned)caseBBs.size());
+    for (auto& p : caseBBs) {
+        swi->addCase(llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), p.first), p.second);
     }
 
     // push destino de 'break' para todo o switch
     breakTargets.push_back(endBB);
 
-    // CASE bodies
-    for (size_t i=0;i<caseBBs.size();++i) {
-        auto [val, caseBB] = caseBBs[i];
-        F->insert(F->end(), caseBB);
+    // Emit case bodies
+    for (size_t i = 0; i < caseBBs.size(); ++i) {
+        auto [val, caseBB] = caseBBs[i]; (void)val;
         builder->SetInsertPoint(caseBB);
         // calcula o destino de fallthrough: proximo case se houver; senao default, senao end
-        llvm::BasicBlock* nextArm = nullptr;
-        if (i + 1 < caseBBs.size()) nextArm = caseBBs[i+1].second;
-        else                         nextArm = (defaultBB != endBB ? defaultBB : endBB);
-
+        llvm::BasicBlock* nextArm = (i + 1 < caseBBs.size()) ? caseBBs[i+1].second
+                                    : (defaultBB != endBB ? defaultBB : endBB);
         fallthroughTargets.push_back(nextArm);
         emitBlock(s->cases[i].body.get(), scope);
         fallthroughTargets.pop_back();
+        // Sem fallthrough implícito: se não terminou, salta para end
         if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(endBB);
     }
 
-    // DEFAULT body
+    // Default body
     if (defaultBB != endBB) {
-        F->insert(F->end(), defaultBB);
         builder->SetInsertPoint(defaultBB);
-        // default nao tem proximo arm: fallthrough -> end
         fallthroughTargets.push_back(endBB);
         emitBlock(s->deflt.get(), scope);
         fallthroughTargets.pop_back();
@@ -966,9 +951,14 @@ void Codegen::emitSwitch(SwitchStmt* s, Scope& scope) {
     }
 
     breakTargets.pop_back();
-    // END
-    F->insert(F->end(), endBB);
-    builder->SetInsertPoint(endBB);
+
+    // Ensure insertion point is valid
+    if (!endBB->getTerminator()) {
+        builder->SetInsertPoint(endBB);
+    } else {
+        auto* contBB = llvm::BasicBlock::Create(ctx, "switch.cont", F);
+        builder->SetInsertPoint(contBB);
+    }
 }
 
 } // namespace mycc
