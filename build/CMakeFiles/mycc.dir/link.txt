@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmycc.a CMakeFiles/mycc.dir/src/cli.cpp.o CMakeFiles/mycc.dir/src/lexer.cpp.o CMakeFiles/mycc.dir/src/parser.cpp.o CMakeFiles/mycc.dir/src/codegen.cpp.o CMakeFiles/mycc.dir/src/diagnostics.cpp.o
+/usr/bin/ranlib libmycc.a

@@ -1,0 +1,44 @@
+[
+{
+  "directory": "/Users/jabour/VSCODE/New Compilator/build",
+  "command": "/usr/bin/c++ -DMYCC_BUILD_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator/build\\\"\" -DMYCC_RUNTIME_LIB=\"\\\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\\\"\" -DMYCC_SOURCE_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator\\\"\" -I\"/Users/jabour/VSCODE/New Compilator/include\" -I\"/Users/jabour/VSCODE/New Compilator/src\" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include -g -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -o CMakeFiles/mycc.dir/src/cli.cpp.o -c \"/Users/jabour/VSCODE/New Compilator/src/cli.cpp\"",
+  "file": "/Users/jabour/VSCODE/New Compilator/src/cli.cpp",
+  "output": "CMakeFiles/mycc.dir/src/cli.cpp.o"
+},
+{
+  "directory": "/Users/jabour/VSCODE/New Compilator/build",
+  "command": "/usr/bin/c++ -DMYCC_BUILD_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator/build\\\"\" -DMYCC_RUNTIME_LIB=\"\\\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\\\"\" -DMYCC_SOURCE_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator\\\"\" -I\"/Users/jabour/VSCODE/New Compilator/include\" -I\"/Users/jabour/VSCODE/New Compilator/src\" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include -g -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -o CMakeFiles/mycc.dir/src/lexer.cpp.o -c \"/Users/jabour/VSCODE/New Compilator/src/lexer.cpp\"",
+  "file": "/Users/jabour/VSCODE/New Compilator/src/lexer.cpp",
+  "output": "CMakeFiles/mycc.dir/src/lexer.cpp.o"
+},
+{
+  "directory": "/Users/jabour/VSCODE/New Compilator/build",
+  "command": "/usr/bin/c++ -DMYCC_BUILD_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator/build\\\"\" -DMYCC_RUNTIME_LIB=\"\\\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\\\"\" -DMYCC_SOURCE_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator\\\"\" -I\"/Users/jabour/VSCODE/New Compilator/include\" -I\"/Users/jabour/VSCODE/New Compilator/src\" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include -g -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -o CMakeFiles/mycc.dir/src/parser.cpp.o -c \"/Users/jabour/VSCODE/New Compilator/src/parser.cpp\"",
+  "file": "/Users/jabour/VSCODE/New Compilator/src/parser.cpp",
+  "output": "CMakeFiles/mycc.dir/src/parser.cpp.o"
+},
+{
+  "directory": "/Users/jabour/VSCODE/New Compilator/build",
+  "command": "/usr/bin/c++ -DMYCC_BUILD_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator/build\\\"\" -DMYCC_RUNTIME_LIB=\"\\\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\\\"\" -DMYCC_SOURCE_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator\\\"\" -I\"/Users/jabour/VSCODE/New Compilator/include\" -I\"/Users/jabour/VSCODE/New Compilator/src\" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include -g -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -o CMakeFiles/mycc.dir/src/codegen.cpp.o -c \"/Users/jabour/VSCODE/New Compilator/src/codegen.cpp\"",
+  "file": "/Users/jabour/VSCODE/New Compilator/src/codegen.cpp",
+  "output": "CMakeFiles/mycc.dir/src/codegen.cpp.o"
+},
+{
+  "directory": "/Users/jabour/VSCODE/New Compilator/build",
+  "command": "/usr/bin/c++ -DMYCC_BUILD_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator/build\\\"\" -DMYCC_RUNTIME_LIB=\"\\\"/Users/jabour/VSCODE/New Compilator/build/libmycc_runtime.a\\\"\" -DMYCC_SOURCE_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator\\\"\" -I\"/Users/jabour/VSCODE/New Compilator/include\" -I\"/Users/jabour/VSCODE/New Compilator/src\" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include -g -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -o CMakeFiles/mycc.dir/src/diagnostics.cpp.o -c \"/Users/jabour/VSCODE/New Compilator/src/diagnostics.cpp\"",
+  "file": "/Users/jabour/VSCODE/New Compilator/src/diagnostics.cpp",
+  "output": "CMakeFiles/mycc.dir/src/diagnostics.cpp.o"
+},
+{
+  "directory": "/Users/jabour/VSCODE/New Compilator/build",
+  "command": "/usr/bin/cc -DMYCC_BUILD_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator/build\\\"\" -DMYCC_SOURCE_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator\\\"\" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -g -std=gnu11 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -o CMakeFiles/mycc_runtime.dir/src/runtime.c.o -c \"/Users/jabour/VSCODE/New Compilator/src/runtime.c\"",
+  "file": "/Users/jabour/VSCODE/New Compilator/src/runtime.c",
+  "output": "CMakeFiles/mycc_runtime.dir/src/runtime.c.o"
+},
+{
+  "directory": "/Users/jabour/VSCODE/New Compilator/build",
+  "command": "/usr/bin/c++ -DMYCC_BUILD_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator/build\\\"\" -DMYCC_SOURCE_DIR=\"\\\"/Users/jabour/VSCODE/New Compilator\\\"\" -I\"/Users/jabour/VSCODE/New Compilator/include\" -isystem /opt/homebrew/Cellar/llvm/21.1.0/include -isystem /opt/homebrew/include -g -std=gnu++20 -arch arm64 -mmacosx-version-min=15.0   -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -o CMakeFiles/mycc_cli.dir/src/main.cpp.o -c \"/Users/jabour/VSCODE/New Compilator/src/main.cpp\"",
+  "file": "/Users/jabour/VSCODE/New Compilator/src/main.cpp",
+  "output": "CMakeFiles/mycc_cli.dir/src/main.cpp.o"
+}
+]

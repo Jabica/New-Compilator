@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmycc_runtime.a CMakeFiles/mycc_runtime.dir/src/runtime.c.o
+/usr/bin/ranlib libmycc_runtime.a
