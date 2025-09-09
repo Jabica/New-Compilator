@@ -1,0 +1,4 @@
+inteiro x = 3;
+inteiro V[x + 1];   // ERRO: tamanho não é const-expr
+funcao main(): inteiro { retorna 0; }
+

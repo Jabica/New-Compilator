@@ -20,8 +20,8 @@ const Token& Parser::expect(TokenKind k, const char* what){
 // programa := { funcao }
 std::unique_ptr<Program> Parser::parse(){
     auto prog = std::make_unique<Program>();
-    // Globais no topo: inteiros/logicos com opcional init literal
-    while (peek().kind == TokenKind::KwInteiro || peek().kind == TokenKind::KwLogico) {
+    // Globais no topo: opcional 'const' + (inteiro|logico)
+    while (peek().kind == TokenKind::KwConst || peek().kind == TokenKind::KwInteiro || peek().kind == TokenKind::KwLogico) {
         auto g = parseGlobalDecl();
         if (!g) break;
         prog->globals.push_back(std::move(g));
@@ -45,6 +45,10 @@ std::unique_ptr<Program> Parser::parse(){
 
 // Declaração global: tipo IDENT ['[' INT ']'] ['=' literal] ';'
 std::unique_ptr<VarDecl> Parser::parseGlobalDecl(){
+    bool isConst = false;
+    if (match(TokenKind::KwConst)) {
+        isConst = true;
+    }
     Type ty;
     Token tyTok = peek();
     if (match(TokenKind::KwInteiro)) ty = Type::inteiro();
@@ -56,29 +60,55 @@ std::unique_ptr<VarDecl> Parser::parseGlobalDecl(){
 
     Token nameTok = expect(TokenKind::Identifier, "identificador");
 
-    // opcional: [INT]
-    int arrLen = 0;
+    // opcional: [expr]
+    std::unique_ptr<Expr> arrExpr;
     if (match(TokenKind::LBracket)) {
-        if (peek().kind != TokenKind::IntLiteral) {
-            diag.error(peek().line, peek().col, "esperado tamanho inteiro literal em '[]'");
-        } else {
-            arrLen = std::atoi(peek().lexeme.c_str());
-            if (arrLen < 0) arrLen = 0;
-            pos++; // consome INT
-        }
+        arrExpr = parseExpr();
         expect(TokenKind::RBracket, "]");
     }
-    ty.arrayLen = arrLen;
+    ty.arrayLen = 0;
 
     std::unique_ptr<Expr> init;
-    if (match(TokenKind::Assign)) {
-        // Para este patch, init deve ser literal simples (será checado na semântica)
-        init = parseExpr();
+    std::vector<std::unique_ptr<Expr>> initList;
+    bool isArrayDecl = (arrExpr != nullptr);
+    if (isArrayDecl) {
+        if (match(TokenKind::Assign)) {
+            // lista: { expr (, expr)* }
+            expect(TokenKind::LBrace, "{");
+            while (peek().kind != TokenKind::RBrace && !atEnd()) {
+                auto elt = parseExpr();
+                if (!elt) break;
+                initList.push_back(std::move(elt));
+                if (!match(TokenKind::Comma)) break;
+            }
+            expect(TokenKind::RBrace, "}");
+        }
+    } else {
+        if (match(TokenKind::Assign)) {
+            init = parseExpr();
+        }
     }
     expect(TokenKind::Semicolon, ";");
 
     auto v = std::make_unique<VarDecl>(nameTok.lexeme, ty, ty.arrayLen, std::move(init), LFrom(nameTok, filename));
+    v->isConst = isConst;
+    v->initList = std::move(initList);
+    v->arrayLenExpr = std::move(arrExpr);
     return v;
+}
+
+// Apenas literais simples: INT, verdadeiro, falso
+std::unique_ptr<Expr> Parser::parseLiteralExpr(){
+    if (peek().kind == TokenKind::IntLiteral){
+        Token t = peek();
+        int v = std::atoi(t.lexeme.c_str());
+        pos++;
+        return std::make_unique<IntLit>(v, LFrom(t, filename));
+    }
+    if (peek().kind == TokenKind::KwVerdadeiro){ Token t=peek(); pos++; return std::make_unique<BoolLit>(true, LFrom(t, filename)); }
+    if (peek().kind == TokenKind::KwFalso){ Token t=peek(); pos++; return std::make_unique<BoolLit>(false, LFrom(t, filename)); }
+    diag.error(peek().line, peek().col, "esperado literal (inteiro ou booleano)");
+    return std::make_unique<IntLit>(0);
 }
 
 // funcao IDENT '(' [params] ')' ':' tipo bloco
@@ -113,7 +143,7 @@ std::vector<Param> Parser::parseParamsOpt(){
     return ps;
 }
 
-// tipo = inteiro [ '[' INT ']' ]* | logico [ '[' INT ']' ]* | vazio
+// tipo = inteiro [ '[' expr ']' ]* | logico [ '[' expr ']' ]* | vazio
 Type Parser::parseType(){
     Type base;
     if (match(TokenKind::KwInteiro)) base = Type::inteiro();
@@ -126,20 +156,18 @@ Type Parser::parseType(){
 
     // zera e consome sufixos [INT] [INT] ...
     pendingArrayLen = 0;
+    pendingArrayLenExpr.reset();
     while (peek().kind == TokenKind::LBracket) {
         pos++; // '['
-        if (peek().kind != TokenKind::IntLiteral) {
+        if (peek().kind == TokenKind::KwVerdadeiro || peek().kind == TokenKind::KwFalso) {
             diag.error(peek().line, peek().col, "esperado tamanho inteiro dentro de '[]'");
-            while (!atEnd() && peek().kind != TokenKind::RBracket && peek().kind != TokenKind::Semicolon) pos++;
-        } else {
-            pendingArrayLen = std::atoi(peek().lexeme.c_str());
-            pos++; // INT
         }
+        auto e = parseExpr();
         expect(TokenKind::RBracket, "]");
+        pendingArrayLenExpr = std::move(e); // 1D: sobrescreve se repetido
     }
 
-    // aplica no Type (suportamos 1D por enquanto: usa o último)
-    if (pendingArrayLen > 0) base.arrayLen = pendingArrayLen;
+    // Não aplica em Type aqui; a semântica resolverá e preencherá VarDecl::arrayLen e type.arrayLen
     return base;
 }
 
@@ -175,6 +203,7 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
         }
         expect(TokenKind::Semicolon, ";");
         auto v = std::make_unique<VarDecl>(nameTok.lexeme, ty, ty.arrayLen, std::move(init), LFrom(nameTok, filename));
+        v->arrayLenExpr = takePendingArrayLenExpr();
         return v;
     }
 
@@ -193,6 +222,28 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
     // bloco aninhado
     if (peek().kind == TokenKind::LBrace){
         return parseBlock();
+    }
+
+    // for
+    if (peek().kind == TokenKind::KwFor) {
+        pos++; // 'for'
+        return parseFor();
+    }
+    // break
+    if (peek().kind == TokenKind::KwBreak) {
+        pos++;
+        auto t = expect(TokenKind::Semicolon, ";"); (void)t;
+        auto b = std::make_unique<BreakStmt>();
+        b->loc = LFrom(peek(), filename);
+        return b;
+    }
+    // continue
+    if (peek().kind == TokenKind::KwContinue) {
+        pos++;
+        auto t = expect(TokenKind::Semicolon, ";"); (void)t;
+        auto c = std::make_unique<ContinueStmt>();
+        c->loc = LFrom(peek(), filename);
+        return c;
     }
 
     // atribuicao (IDENT '=' ...)
@@ -325,6 +376,66 @@ std::unique_ptr<Stmt> Parser::parseWhile(){
     return node;
 }
 
+// for (init; cond; step) bloco
+std::unique_ptr<Stmt> Parser::parseFor(){
+    expect(TokenKind::LParen, "(");
+
+    // init stmt ou vazio
+    std::unique_ptr<Stmt> initStmt;
+    if (peek().kind != TokenKind::Semicolon) {
+        if (peek().kind == TokenKind::KwVariavel) {
+            // reuse local var decl path: variavel IDENT ':' tipo [ '=' expr ] ';'
+            pos++; // 'variavel'
+            auto nameTok = expect(TokenKind::Identifier, "identificador");
+            expect(TokenKind::Colon, ":");
+            auto ty = parseType();
+            std::unique_ptr<Expr> init;
+            if (match(TokenKind::Assign)) init = parseExpr();
+            expect(TokenKind::Semicolon, ";");
+            auto v = std::make_unique<VarDecl>(nameTok.lexeme, ty, ty.arrayLen, std::move(init), LFrom(nameTok, filename));
+            v->arrayLenExpr = takePendingArrayLenExpr();
+            initStmt = std::move(v);
+        } else if (peek().kind == TokenKind::Identifier && peek(1).kind == TokenKind::Assign) {
+            // assignment
+            auto nameTok = expect(TokenKind::Identifier, "identificador");
+            expect(TokenKind::Assign, "=");
+            auto rhs = parseExpr();
+            expect(TokenKind::Semicolon, ";");
+            initStmt = std::make_unique<AssignStmt>(nameTok.lexeme, std::move(rhs), LFrom(nameTok, filename));
+        } else {
+            // expr stmt
+            auto e = parseExpr();
+            expect(TokenKind::Semicolon, ";");
+            initStmt = std::make_unique<ExprStmt>(std::move(e));
+        }
+    } else {
+        pos++; // consome ';'
+    }
+
+    // cond; opcional
+    std::unique_ptr<Expr> condExpr;
+    if (peek().kind != TokenKind::Semicolon) condExpr = parseExpr();
+    expect(TokenKind::Semicolon, ";");
+
+    // step ) opcional (assign ou expr)
+    std::unique_ptr<Stmt> stepStmt;
+    if (peek().kind != TokenKind::RParen) {
+        if (peek().kind == TokenKind::Identifier && peek(1).kind == TokenKind::Assign) {
+            auto nameTok = expect(TokenKind::Identifier, "identificador");
+            expect(TokenKind::Assign, "=");
+            auto rhs = parseExpr();
+            stepStmt = std::make_unique<AssignStmt>(nameTok.lexeme, std::move(rhs), LFrom(nameTok, filename));
+        } else {
+            auto e = parseExpr();
+            stepStmt = std::make_unique<ExprStmt>(std::move(e));
+        }
+    }
+    expect(TokenKind::RParen, ")");
+
+    auto body = parseBlock();
+    return std::make_unique<ForStmt>(std::move(initStmt), std::move(condExpr), std::move(stepStmt), std::move(body));
+}
+
 // IDENT '=' expr ';'       (agora ';' pode ser implícito em contextos seguros)
 std::unique_ptr<Stmt> Parser::parseAssignment(){
     auto nameTok = expect(TokenKind::Identifier, "identificador");
@@ -384,20 +495,27 @@ static bool isFactorOp(TokenKind k) {
 }
 
 std::unique_ptr<Expr> Parser::parseExpr(){
-    return parseEquality();
-}
-
-std::unique_ptr<Expr> Parser::parseEquality(){
+    // lógica: || de menor precedência
     auto lhs = parseComparison();
-    while (isEqualityOp(peek().kind)) {
+    // build a small chain to include ==, relops then logical
+    // First equality layer
+    while (peek().kind == TokenKind::EqEq || peek().kind == TokenKind::BangEq) {
         Token opTok = peek();
         std::string op = opTok.lexeme; pos++;
         auto rhs = parseComparison();
-        auto node = std::make_unique<Binary>(std::move(lhs), op, std::move(rhs), LFrom(opTok, filename));
-        lhs = std::move(node);
+        lhs = std::make_unique<Binary>(std::move(lhs), op, std::move(rhs), LFrom(opTok, filename));
+    }
+    // logical and/or
+    while (peek().kind == TokenKind::AndAnd || peek().kind == TokenKind::OrOr) {
+        Token opTok = peek();
+        std::string op = opTok.lexeme; pos++;
+        auto rhs = parseComparison();
+        lhs = std::make_unique<Binary>(std::move(lhs), op, std::move(rhs), LFrom(opTok, filename));
     }
     return lhs;
 }
+
+std::unique_ptr<Expr> Parser::parseEquality(){ return parseComparison(); }
 
 std::unique_ptr<Expr> Parser::parseComparison(){
     auto lhs = parseTerm();
@@ -445,7 +563,7 @@ std::unique_ptr<Expr> Parser::parseUnary(){
     return parsePrimary();
 }
 
-// primário: INT | IDENT | '(' expr ')' | verdadeiro | falso
+// primário: INT | IDENT | '(' expr ')' | verdadeiro | falso | STRING
 std::unique_ptr<Expr> Parser::parsePrimary(){
     // literal inteiro
     if (peek().kind == TokenKind::IntLiteral){
@@ -453,6 +571,11 @@ std::unique_ptr<Expr> Parser::parsePrimary(){
         int v = std::atoi(t.lexeme.c_str());
         pos++;
         return std::make_unique<IntLit>(v, LFrom(t, filename));
+    }
+    // string literal
+    if (peek().kind == TokenKind::STRING){
+        Token t = peek(); pos++;
+        return std::make_unique<StringLit>(t.lexeme, LFrom(t, filename));
     }
     // identificador (variável, chamada de função e/ou indexação de vetor)
     if (peek().kind == TokenKind::Identifier){

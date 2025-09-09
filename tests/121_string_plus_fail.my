@@ -1,0 +1,4 @@
+funcao main(): inteiro {
+  retorna "a" + "b";
+}
+

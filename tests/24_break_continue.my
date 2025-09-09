@@ -1,0 +1,14 @@
+funcao main(): inteiro {
+  variavel s: inteiro = 0;
+  for (variavel i: inteiro = 0; i < 10; i = i + 1) {
+    se (i == 3) {
+      continue;
+    }
+    se (i == 6) {
+      break;
+    }
+    s = s + 1;
+  }
+  retorna s;
+}
+

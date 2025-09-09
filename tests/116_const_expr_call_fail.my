@@ -1,0 +1,4 @@
+funcao inc(x: inteiro): inteiro { retorna x + 1; }
+const inteiro A = inc(1);       // ERRO: chamada não permitida em const-expr
+funcao main(): inteiro { retorna 0; }
+

@@ -76,11 +76,13 @@ private:
     void emitStmt    (Stmt* s, Scope& scope);
     void emitIf      (IfStmt* s, Scope& scope);
     void emitWhile   (WhileStmt* s, Scope& scope);
+    void emitFor     (ForStmt* s, Scope& scope);
 
     // ---- Expressões ----
     llvm::Value* emitExpr  (Expr* e, Scope& scope);
     llvm::Value* emitUnary (Unary* u, Scope& scope);
     llvm::Value* emitBinary(Binary* b, Scope& scope);
+    llvm::Value* emitStringLiteral(const std::string& s);
 
     // ---- Debug info ----
     void setLoc(const SourceLoc& L);
@@ -96,6 +98,10 @@ private:
     llvm::DIScope* curScope = nullptr; // subprogram ou lexical block atual
     // tabela de globais
     std::unordered_map<std::string, VarSlot> globalSlots;
+
+    // Patch 20: controle de laços para break/continue
+    struct LoopCtx { llvm::BasicBlock* condBB; llvm::BasicBlock* stepBB; llvm::BasicBlock* endBB; };
+    std::vector<LoopCtx> loopStack;
 };
 
 } // namespace mycc

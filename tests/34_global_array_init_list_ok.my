@@ -1,0 +1,6 @@
+inteiro V[4] = {10, 20, 30};
+
+funcao main(): inteiro {
+  retorna V[0] + V[1] + V[2] + V[3];
+}
+

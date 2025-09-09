@@ -1,0 +1,6 @@
+funcao main(): inteiro {
+  prints("hello");
+  prints("linha\ncom\nquebras");
+  retorna 0;
+}
+

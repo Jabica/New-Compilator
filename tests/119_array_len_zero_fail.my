@@ -1,0 +1,4 @@
+const inteiro Z = 0;
+inteiro V[Z];       // ERRO: tamanho deve ser >= 1
+funcao main(): inteiro { retorna 0; }
+

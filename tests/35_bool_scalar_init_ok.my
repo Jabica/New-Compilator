@@ -1,0 +1,7 @@
+logico F = falso;
+logico T = verdadeiro;
+
+funcao main(): inteiro {
+  retorna T + F;
+}
+

@@ -1,0 +1,5 @@
+const inteiro V[3] = {10,20,30};
+inteiro i = 1;
+const inteiro Z = V[i];   // ERRO: índice não constante
+funcao main(): inteiro { retorna 0; }
+

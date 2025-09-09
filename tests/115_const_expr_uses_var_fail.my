@@ -1,0 +1,4 @@
+inteiro X = 10;                 // não-const
+const inteiro K = X + 1;        // ERRO: expr não constante
+funcao main(): inteiro { retorna 0; }
+

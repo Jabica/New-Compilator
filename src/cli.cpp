@@ -461,12 +461,12 @@ int run(int argc, char** argv) {
     Lexer lex(src, diag);
     auto toks = lex.tokenize();
 
-    if (diag.hadError) return 1;
+    if (diag.hadError) { diag.printAll(); return 1; }
 
     Parser parser(toks, diag, file);
     auto prog = parser.parse();
 
-    if (diag.hadError) return 1;
+    if (diag.hadError) { diag.printAll(); return 1; }
 
     if (mode == "--parse-only") {
         std::cout << "OK: parse concluido\n";
@@ -522,7 +522,7 @@ int run(int argc, char** argv) {
     } else if (mode == "--check") {
         SemanticChecker sem(diag);
         bool ok = sem.run(prog.get());
-        if (!ok || diag.hadError) return 1;
+        if (!ok || diag.hadError) { diag.printAll(); return 1; }
         std::cout << "OK: semantica concluida\n";
         return 0;
     }

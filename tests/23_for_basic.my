@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+  variavel s: inteiro = 0;
+  for (variavel i: inteiro = 0; i < 4; i = i + 1) {
+    s = s + 10;
+  }
+  retorna s;
+}
+

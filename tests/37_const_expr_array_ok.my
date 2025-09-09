@@ -1,0 +1,7 @@
+const inteiro N = 4;
+inteiro V[4] = { 1+1, 2*3, 7%4, (10-3) };
+
+funcao main(): inteiro {
+  retorna V[0] + V[1] + V[2] + V[3];
+}
+

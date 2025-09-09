@@ -31,25 +31,67 @@ void Codegen::emitGlobals(Program* p) {
         llvm::Type* elemTy = ty(g->type.elem());
         if (g->arrayLen > 0) {
             auto* arrTy = llvm::ArrayType::get(elemTy, (uint64_t)g->arrayLen);
+            llvm::Constant* initC = nullptr;
+            if (!g->constInitList.empty()) {
+                std::vector<llvm::Constant*> items;
+                items.reserve((size_t)g->arrayLen);
+                for (auto v : g->constInitList) {
+                    if (elemTy->isIntegerTy(1)) items.push_back(v?llvm::ConstantInt::getTrue(ctx):llvm::ConstantInt::getFalse(ctx));
+                    else items.push_back(llvm::ConstantInt::get(elemTy, v));
+                }
+                while (items.size() < (size_t)g->arrayLen) {
+                    items.push_back(elemTy->isIntegerTy(1) ? llvm::ConstantInt::getFalse(ctx)
+                                                           : llvm::ConstantInt::get(elemTy, 0));
+                }
+                initC = llvm::ConstantArray::get(arrTy, items);
+            } else if (!g->initList.empty()) {
+                std::vector<llvm::Constant*> items;
+                items.reserve((size_t)g->arrayLen);
+                for (auto& elt : g->initList) {
+                    if (auto lit = dynamic_cast<IntLit*>(elt.get())) {
+                        if (elemTy->isIntegerTy(1)) {
+                            items.push_back(lit->value ? llvm::ConstantInt::getTrue(ctx)
+                                                        : llvm::ConstantInt::getFalse(ctx));
+                        } else {
+                            items.push_back(llvm::ConstantInt::get(elemTy, lit->value));
+                        }
+                    }
+                }
+                while (items.size() < (size_t)g->arrayLen) {
+                    items.push_back(elemTy->isIntegerTy(1) ? llvm::ConstantInt::getFalse(ctx)
+                                                           : llvm::ConstantInt::get(elemTy, 0));
+                }
+                initC = llvm::ConstantArray::get(arrTy, items);
+            } else {
+                initC = llvm::ConstantAggregateZero::get(arrTy);
+            }
             auto* GV = new llvm::GlobalVariable(
-                *mod, arrTy, /*isConstant=*/false,
+                *mod, arrTy, /*isConstant=*/g->isConst,
                 llvm::GlobalValue::ExternalLinkage,
-                llvm::ConstantAggregateZero::get(arrTy),
+                initC,
                 g->name);
             globalSlots[g->name] = VarSlot{GV, elemTy, /*isGlobal*/true, /*isArray*/true, (size_t)g->arrayLen};
         } else {
             llvm::Constant* initC = nullptr;
-            if (g->init) {
+            if (g->hasConstInit) {
+                if (elemTy->isIntegerTy(1)) initC = g->constInit?llvm::ConstantInt::getTrue(ctx):llvm::ConstantInt::getFalse(ctx);
+                else initC = llvm::ConstantInt::get(elemTy, g->constInit);
+            } else if (g->init) {
                 if (auto lit = dynamic_cast<IntLit*>(g->init.get())) {
-                    initC = llvm::ConstantInt::get(elemTy, lit->value);
+                    if (elemTy->isIntegerTy(1)) {
+                        initC = lit->value ? llvm::ConstantInt::getTrue(ctx)
+                                           : llvm::ConstantInt::getFalse(ctx);
+                    } else {
+                        initC = llvm::ConstantInt::get(elemTy, lit->value);
+                    }
                 }
             }
             if (!initC) {
-                if (elemTy->isIntegerTy()) initC = llvm::ConstantInt::get(elemTy, 0);
-                else initC = llvm::Constant::getNullValue(elemTy);
+                initC = elemTy->isIntegerTy(1) ? (llvm::Constant*)llvm::ConstantInt::getFalse(ctx)
+                                               : (llvm::Constant*)llvm::ConstantInt::get(elemTy, 0);
             }
             auto* GV = new llvm::GlobalVariable(
-                *mod, elemTy, /*isConstant=*/false,
+                *mod, elemTy, /*isConstant=*/g->isConst,
                 llvm::GlobalValue::ExternalLinkage,
                 initC, g->name);
             globalSlots[g->name] = VarSlot{GV, elemTy, /*isGlobal*/true, /*isArray*/false, 0};
@@ -102,6 +144,7 @@ static llvm::DIType* diFromType(llvm::DIBuilder* D, llvm::DIType* diI32, llvm::D
         case mycc::Type::Inteiro: return diI32;
         case mycc::Type::Logico:  return diI1;
         case mycc::Type::Vazio:   return diVoid;
+        case mycc::Type::Texto:   return diI32; // aproximação
     }
     return diI32;
 }
@@ -112,6 +155,7 @@ llvm::Type* Codegen::ty(const mycc::Type& t) {
         case mycc::Type::Inteiro: return llvm::Type::getInt32Ty(ctx);
         case mycc::Type::Logico:  return llvm::Type::getInt1Ty(ctx);
         case mycc::Type::Vazio:   return llvm::Type::getVoidTy(ctx);
+        case mycc::Type::Texto:   return llvm::PointerType::get(ctx, 0); // i8*
     }
     return llvm::Type::getInt32Ty(ctx);
 }
@@ -129,6 +173,12 @@ void Codegen::seedBuiltins() {
                                         { llvm::Type::getInt1Ty(ctx) }, false);
     if (!mod->getFunction("printb"))
         llvm::Function::Create(FTb, llvm::Function::ExternalLinkage, "printb", mod.get());
+
+    // void prints(i8*)
+    auto *FTs = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                        { llvm::PointerType::get(ctx, 0) }, false);
+    if (!mod->getFunction("prints"))
+        llvm::Function::Create(FTs, llvm::Function::ExternalLinkage, "prints", mod.get());
 }
 
 llvm::Value* Codegen::toBool(llvm::Value* v) {
@@ -482,6 +532,17 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
     if (auto iff = dynamic_cast<IfStmt*>(s)) { emitIf(iff, scope); return; }
     if (auto wh  = dynamic_cast<WhileStmt*>(s)) { emitWhile(wh, scope); return; }
+    if (auto fr  = dynamic_cast<ForStmt*>(s))   { emitFor(fr, scope); return; }
+    if (auto brk = dynamic_cast<BreakStmt*>(s)) {
+        if (loopStack.empty()) { diag.error(0,0, "codegen: 'break' fora de laco"); return; }
+        builder->CreateBr(loopStack.back().endBB);
+        return;
+    }
+    if (auto cont = dynamic_cast<ContinueStmt*>(s)) {
+        if (loopStack.empty()) { diag.error(0,0, "codegen: 'continue' fora de laco"); return; }
+        builder->CreateBr(loopStack.back().stepBB);
+        return;
+    }
 
     if (auto blk = dynamic_cast<Block*>(s)) {
         emitBlock(blk, scope);
@@ -500,6 +561,9 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
     setLoc(e->loc);
     if (auto i = dynamic_cast<IntLit*>(e)) {
         return ConstantInt::get(llvm::Type::getInt32Ty(ctx), i->value, /*isSigned=*/true);
+    }
+    if (auto s = dynamic_cast<StringLit*>(e)) {
+        return emitStringLiteral(s->value); // i8*
     }
 
     if (auto v = dynamic_cast<VarRef*>(e)) {
@@ -676,6 +740,21 @@ Value* Codegen::emitBinary(Binary* b, Scope& scope) {
     return L;
 }
 
+llvm::Value* Codegen::emitStringLiteral(const std::string& s) {
+    using namespace llvm;
+    std::string withZero = s; withZero.push_back('\0');
+    auto* arrTy = ArrayType::get(llvm::Type::getInt8Ty(ctx), (uint64_t)withZero.size());
+    auto* data = ConstantDataArray::getString(ctx, withZero, /*AddNull*/ false);
+    auto* g = new GlobalVariable(*mod, arrTy, /*isConstant*/true,
+                                 GlobalValue::PrivateLinkage,
+                                 data, ".str");
+    g->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+    g->setAlignment(MaybeAlign(1));
+    Value* zero = ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+    Value* idxs[] = { zero, zero };
+    return ConstantExpr::getInBoundsGetElementPtr(arrTy, g, idxs);
+}
+
 void Codegen::emitIf(IfStmt* s, Scope& scope) {
     setLoc(s->loc);
     llvm::Function* F = builder->GetInsertBlock()->getParent();
@@ -712,6 +791,8 @@ void Codegen::emitWhile(WhileStmt* s, Scope& scope) {
 
     builder->CreateBr(condBB);
 
+    loopStack.push_back({condBB, condBB, endBB});
+
     builder->SetInsertPoint(condBB);
     llvm::Value* cond = toBool(emitExpr(s->cond.get(), scope));
     builder->CreateCondBr(cond, bodyBB, endBB);
@@ -720,6 +801,46 @@ void Codegen::emitWhile(WhileStmt* s, Scope& scope) {
     builder->SetInsertPoint(bodyBB);
     emitBlock(s->body.get(), scope);
     if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(condBB);
+
+    loopStack.pop_back();
+
+    F->insert(F->end(), endBB);
+    builder->SetInsertPoint(endBB);
+}
+
+void Codegen::emitFor(ForStmt* s, Scope& parent) {
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+    Scope local(&parent);
+    if (s->init) emitStmt(s->init.get(), local);
+
+    auto* condBB = llvm::BasicBlock::Create(ctx, "for.cond", F);
+    auto* bodyBB = llvm::BasicBlock::Create(ctx, "for.body");
+    auto* stepBB = llvm::BasicBlock::Create(ctx, "for.step");
+    auto* endBB  = llvm::BasicBlock::Create(ctx, "for.end");
+
+    builder->CreateBr(condBB);
+
+    loopStack.push_back({condBB, stepBB, endBB});
+
+    builder->SetInsertPoint(condBB);
+    llvm::Value* cond = nullptr;
+    if (s->cond) cond = toBool(emitExpr(s->cond.get(), local));
+    else         cond = llvm::ConstantInt::getTrue(ctx);
+    builder->CreateCondBr(cond, bodyBB, endBB);
+
+    F->insert(F->end(), bodyBB);
+    builder->SetInsertPoint(bodyBB);
+    emitBlock(s->body.get(), local);
+    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(stepBB);
+
+    F->insert(F->end(), stepBB);
+    builder->SetInsertPoint(stepBB);
+    if (s->step) {
+        emitStmt(s->step.get(), local);
+    }
+    builder->CreateBr(condBB);
+
+    loopStack.pop_back();
 
     F->insert(F->end(), endBB);
     builder->SetInsertPoint(endBB);

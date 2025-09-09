@@ -1,0 +1,6 @@
+const inteiro A = 3;
+const inteiro B = A * 7;   // 21
+const logico  F = (B % 2) == 0; // false
+
+funcao main(): inteiro { retorna B + F; }
+

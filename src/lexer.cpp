@@ -14,11 +14,15 @@ static TokenKind keywordKind(const std::string& s) {
         {"se", TokenKind::KwSe},
         {"senao", TokenKind::KwSenao},
         {"enquanto", TokenKind::KwEnquanto},
+        {"for", TokenKind::KwFor},
+        {"break", TokenKind::KwBreak},
+        {"continue", TokenKind::KwContinue},
         {"inteiro", TokenKind::KwInteiro},
         {"logico", TokenKind::KwLogico},
         {"vazio", TokenKind::KwVazio},
         {"verdadeiro", TokenKind::KwVerdadeiro},
         {"falso", TokenKind::KwFalso},
+        {"const", TokenKind::KwConst},
     };
     auto it = kw.find(s);
     return it == kw.end() ? TokenKind::Identifier : it->second;
@@ -64,6 +68,33 @@ std::vector<Token> Lexer::tokenize() {
             toks.push_back(makeToken(TokenKind::IntLiteral, n, l, c));
             continue;
         }
+        // String literal
+        if (ch == '"') {
+            get(); // consume opening quote
+            std::string buf;
+            while (true) {
+                char cc = peek();
+                if (cc == '\0') break;
+                if (cc == '"') { get(); break; }
+                cc = get();
+                if (cc == '\\') {
+                    char e = get();
+                    switch (e) {
+                        case 'n': buf.push_back('\n'); break;
+                        case 't': buf.push_back('\t'); break;
+                        case '0': buf.push_back('\0'); break;
+                        case '\\': buf.push_back('\\'); break;
+                        case '"': buf.push_back('"'); break;
+                        case '\0': buf.push_back('\0'); break;
+                        default: buf.push_back(e); break;
+                    }
+                } else {
+                    buf.push_back(cc);
+                }
+            }
+            toks.push_back(makeToken(TokenKind::STRING, buf, l, c));
+            continue;
+        }
         // Símbolos/operadores
         switch (ch) {
             case '(': get(); toks.push_back(makeToken(TokenKind::LParen, "(", l, c)); continue;
@@ -83,6 +114,19 @@ std::vector<Token> Lexer::tokenize() {
                 get();
                 if (peek() == '=') { get(); toks.push_back(makeToken(TokenKind::BangEq, "!=", l, c)); }
                 else { toks.push_back(makeToken(TokenKind::Bang, "!", l, c)); }
+                continue;
+            }
+            case '&': {
+                get();
+                if (peek() == '&') { get(); toks.push_back(makeToken(TokenKind::AndAnd, "&&", l, c)); continue; }
+                // caractere inesperado
+                diag.error(l, c, std::string("caractere inesperado: '&'"));
+                continue;
+            }
+            case '|': {
+                get();
+                if (peek() == '|') { get(); toks.push_back(makeToken(TokenKind::OrOr, "||", l, c)); continue; }
+                diag.error(l, c, std::string("caractere inesperado: '|'"));
                 continue;
             }
             case '=': {

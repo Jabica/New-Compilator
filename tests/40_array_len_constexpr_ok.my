@@ -1,0 +1,13 @@
+const inteiro A = 2;
+const inteiro B = A * 3;     // 6
+inteiro V[B-1];              // 5
+
+funcao main(): inteiro {
+  V[0] = 10;
+  V[1] = 20;
+  V[2] = 30;
+  V[3] = 40;
+  V[4] = 50;
+  retorna V[0] + V[4];       // 60
+}
+

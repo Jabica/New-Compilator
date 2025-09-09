@@ -1,0 +1,6 @@
+const logico BITS[4] = {verdadeiro, falso};
+
+funcao main(): inteiro {
+  retorna BITS[0] + BITS[1] + BITS[2] + BITS[3];
+}
+

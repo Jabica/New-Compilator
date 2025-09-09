@@ -1,0 +1,6 @@
+const inteiro C = 5;
+funcao main(): inteiro {
+  C = 9;
+  retorna 0;
+}
+

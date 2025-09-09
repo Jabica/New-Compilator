@@ -1,0 +1,8 @@
+const inteiro H = 41;
+inteiro G;
+
+funcao main(): inteiro {
+  G = H + 1;
+  retorna G;
+}
+

@@ -10,7 +10,9 @@ enum class TokenKind {
     IntLiteral,
     // Palavras-chave
     KwFuncao, KwVariavel, KwRetorna, KwSe, KwSenao, KwEnquanto,
-    KwInteiro, KwLogico, KwVazio, KwVerdadeiro, KwFalso,
+    KwFor, KwBreak, KwContinue,
+    KwInteiro, KwLogico, KwVazio, KwVerdadeiro, KwFalso, KwConst,
+    STRING,
     // Símbolos
     LParen, RParen, LBrace, RBrace, Comma, Colon, Semicolon,
     LBracket, RBracket,
@@ -20,6 +22,7 @@ enum class TokenKind {
     Bang, // !
     EqEq, BangEq,
     Lt, Gt, Le, Ge,
+    AndAnd, OrOr,
 };
 
 struct Token {
@@ -40,11 +43,16 @@ inline const char* to_string(TokenKind k) {
         case TokenKind::KwSe: return "se";
         case TokenKind::KwSenao: return "senao";
         case TokenKind::KwEnquanto: return "enquanto";
+        case TokenKind::KwFor: return "for";
+        case TokenKind::KwBreak: return "break";
+        case TokenKind::KwContinue: return "continue";
         case TokenKind::KwInteiro: return "inteiro";
         case TokenKind::KwLogico: return "logico";
         case TokenKind::KwVazio: return "vazio";
         case TokenKind::KwVerdadeiro: return "verdadeiro";
         case TokenKind::KwFalso: return "falso";
+        case TokenKind::KwConst: return "const";
+        case TokenKind::STRING: return "STRING";
         case TokenKind::LParen: return "(";
         case TokenKind::RParen: return ")";
         case TokenKind::LBrace: return "{";
@@ -67,6 +75,8 @@ inline const char* to_string(TokenKind k) {
         case TokenKind::Gt: return ">";
         case TokenKind::Le: return "<=";
         case TokenKind::Ge: return ">=";
+        case TokenKind::AndAnd: return "&&";
+        case TokenKind::OrOr: return "||";
     }
     return "?";
 }

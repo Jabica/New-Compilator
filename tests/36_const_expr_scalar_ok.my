@@ -1,0 +1,6 @@
+const inteiro A = 2 + 3 * 4;    // 14
+const inteiro B = A - 5;        // 9
+const logico  C = B > 3;        // true
+
+funcao main(): inteiro { retorna B + C; }
+

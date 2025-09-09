@@ -23,6 +23,9 @@ inline bool isImplicitlyConvertible(const Type& from, const Type& to) {
     // promoção permitida apenas: Logico -> Inteiro (escalares)
     if (from.kind == Type::Logico && to.kind == Type::Inteiro) return true;
 
+    // Texto não é conversível implicitamente
+    if (from.kind == Type::Texto || to.kind == Type::Texto) return false;
+
     return false;
 }
 
@@ -34,6 +37,7 @@ inline std::string getCallName(const Call& c) {
 
 static inline bool isIntLiteral01(Expr* e) {
     if (auto lit = dynamic_cast<IntLit*>(e)) return lit->value == 0 || lit->value == 1;
+    if (auto bl  = dynamic_cast<BoolLit*>(e)) return true;
     return false;
 }
 
@@ -41,6 +45,7 @@ static inline bool isIntLiteral01(Expr* e) {
 static inline bool tryEvalIntConst(Expr* e, long long& out) {
     // Literal inteiro
     if (auto lit = dynamic_cast<IntLit*>(e)) { out = lit->value; return true; }
+    if (auto bl  = dynamic_cast<BoolLit*>(e)) { out = bl->value?1:0; return true; }
 
     // Unário '-'
     if (auto u = dynamic_cast<Unary*>(e)) {
@@ -77,6 +82,8 @@ struct Scope {
     std::unordered_map<std::string, Type> vars;
     // Marca inteiros que sabemos ser 0/1 (ex.: inicializados com 0/1 ou recebendo booleanos)
     std::unordered_map<std::string, bool> boolLike;
+    // Patch 16: marca constantes (verdadeiro se o símbolo é const neste escopo)
+    std::unordered_map<std::string, bool> isConst;
     Scope* parent = nullptr;
 
     explicit Scope(Scope* p=nullptr) : parent(p) {}
@@ -86,6 +93,7 @@ struct Scope {
         if (inserted) {
             // reset flag local ao declarar
             boolLike.erase(name);
+            isConst[name] = false;
         }
         return inserted;
     }
@@ -124,6 +132,26 @@ struct Scope {
         // fallback: se não achar, grava aqui mesmo
         boolLike[name] = v;
     }
+
+    // Define const no escopo onde a variável foi declarada
+    void setConstWhereDeclared(const std::string& name, bool v){
+        for (auto s=this; s; s=s->parent){
+            auto it = s->vars.find(name);
+            if (it != s->vars.end()){
+                s->isConst[name] = v;
+                return;
+            }
+        }
+        isConst[name] = v;
+    }
+    bool getConst(const std::string& name) const{
+        for (auto s=this; s; s=s->parent){
+            auto it = s->isConst.find(name);
+            if (it != s->isConst.end()) return it->second;
+            // If name not present in this scope's map, continue searching
+        }
+        return false;
+    }
 };
 
 struct FuncSig {
@@ -149,14 +177,89 @@ public:
 
 private:
     Diag& diag;
+    int loopDepth = 0;
     std::unordered_map<std::string, FuncSig> funcs;
     std::unordered_map<std::string, Type> globals;
+    std::unordered_map<std::string, bool> globalsConst;
+    struct ConstVal { bool isConst=false; Type ty=Type::inteiro(); long long i=0; };
+    std::unordered_map<std::string, ConstVal> constScalars; // apenas globais const escalares
+    std::unordered_map<std::string, std::vector<long long>> constArrays; // globais const vetores (valores normalizados)
+
+    // Avaliador de const-expr
+    ConstVal toBool(ConstVal x){
+        if (x.ty.kind == Type::Inteiro) { x.ty = Type::logico(); x.i = (x.i!=0)?1:0; return x; }
+        if (x.ty.kind == Type::Logico) { x.i = (x.i!=0)?1:0; return x; }
+        return ConstVal{};
+    }
+    ConstVal toInt(ConstVal x){
+        if (x.ty.kind == Type::Logico) { x.ty = Type::inteiro(); x.i = (x.i!=0)?1:0; return x; }
+        if (x.ty.kind == Type::Inteiro) { return x; }
+        return ConstVal{};
+    }
+    ConstVal evalConst(Expr* e){
+        if (auto lit = dynamic_cast<IntLit*>(e)) { return ConstVal{true, Type::inteiro(), (long long)lit->value}; }
+        if (auto vr = dynamic_cast<VarRef*>(e)) {
+            auto it = constScalars.find(vr->name);
+            if (it != constScalars.end()) return it->second;
+            return ConstVal{}; // arrays sem index nao sao const-expr
+        }
+        if (auto bl = dynamic_cast<BoolLit*>(e)) { return ConstVal{true, Type::logico(), bl->value?1:0}; }
+        if (auto u = dynamic_cast<Unary*>(e)) {
+            ConstVal r = evalConst(u->rhs.get()); if (!r.isConst) return r;
+            if (u->op == "-") { r = toInt(r); r.i = -r.i; r.ty = Type::inteiro(); return r; }
+            if (u->op == "!") { r = toBool(r); r.i = r.i?0:1; r.ty = Type::logico(); return r; }
+            return ConstVal{};
+        }
+        if (auto b = dynamic_cast<Binary*>(e)) {
+            ConstVal L = evalConst(b->lhs.get()); if (!L.isConst) return L;
+            ConstVal R = evalConst(b->rhs.get()); if (!R.isConst) return R;
+            const std::string& op = b->op;
+            if (op=="+"||op=="-"||op=="*"||op=="/"||op=="%"){
+                L = toInt(L); R = toInt(R);
+                if (op=="+") L.i = L.i + R.i;
+                else if (op=="-") L.i = L.i - R.i;
+                else if (op=="*") L.i = L.i * R.i;
+                else if (op=="/") { if (R.i==0) return ConstVal{}; L.i = L.i / R.i; }
+                else if (op=="%") { if (R.i==0) return ConstVal{}; L.i = L.i % R.i; }
+                L.ty = Type::inteiro(); return L;
+            }
+            if (op=="<"||op=="<="||op==">"||op==">="||op=="=="||op=="!="){
+                L = toInt(L); R = toInt(R);
+                bool res=false;
+                if (op=="<") res = L.i < R.i; else if (op=="<=") res = L.i <= R.i; else if (op==">") res = L.i > R.i;
+                else if (op==">=") res = L.i >= R.i; else if (op=="==") res = L.i == R.i; else if (op=="!=") res = L.i != R.i;
+                return ConstVal{true, Type::logico(), res?1:0};
+            }
+            if (op=="&&"||op=="||"){
+                L = toBool(L);
+                if (op=="&&") {
+                    if (L.i==0) return ConstVal{true, Type::logico(), 0};
+                    R = toBool(R); return ConstVal{true, Type::logico(), (R.i!=0)?1:0};
+                } else {
+                    if (L.i!=0) return ConstVal{true, Type::logico(), 1};
+                    R = toBool(R); return ConstVal{true, Type::logico(), (R.i!=0)?1:0};
+                }
+            }
+            return ConstVal{};
+        }
+        if (auto ix = dynamic_cast<Index*>(e)) {
+            auto br = dynamic_cast<VarRef*>(ix->base.get()); if (!br) return ConstVal{};
+            auto itA = constArrays.find(br->name); if (itA==constArrays.end()) return ConstVal{};
+            ConstVal ci = evalConst(ix->idx.get()); if (!ci.isConst) return ConstVal{}; ci = toInt(ci);
+            if (ci.i < 0 || (size_t)ci.i >= itA->second.size()) return ConstVal{};
+            // tipo do elemento desconhecido aqui; coerção depois
+            return ConstVal{true, Type::inteiro(), itA->second[(size_t)ci.i]};
+        }
+        // call or others: not const
+        return ConstVal{};
+    }
 
     // Built-ins mínimos (lado semântico)
     void seedBuiltins() {
         // printi(int), printb(logico)
         funcs["printi"] = FuncSig{ Type::vazio(), { Type::inteiro() } };
         funcs["printb"] = FuncSig{ Type::vazio(), { Type::logico()  } };
+        funcs["prints"] = FuncSig{ Type::vazio(), { Type::texto()   } };
     }
 
     void collectFuncs(Program* prog){
@@ -199,6 +302,21 @@ private:
     void checkGlobals(Program* prog){
         for (auto& gptr : prog->globals) {
             VarDecl* g = gptr.get();
+            // Resolve tamanho de vetor via const-expr, se presente
+            if (g->arrayLenExpr) {
+                auto cv = evalConst(g->arrayLenExpr.get());
+                if (!cv.isConst || cv.ty.kind != Type::Inteiro) {
+                    diag.error(0,0, "tamanho de vetor deve ser const-expr em '" + g->name + "'");
+                } else {
+                    long long val = cv.i;
+                    if (val < 1 || val > INT_MAX) {
+                        diag.error(0,0, "tamanho de vetor invalido (>=1) em '" + g->name + "'");
+                    } else {
+                        g->arrayLen = (int)val;
+                        g->type.arrayLen = g->arrayLen;
+                    }
+                }
+            }
             // Redeclaração de global
             if (globals.find(g->name) != globals.end()) {
                 diag.error(0,0, "variavel global redeclarada: " + g->name);
@@ -209,23 +327,66 @@ private:
                 diag.error(0,0, "tamanho de vetor invalido em global: " + g->name);
             }
             // Init: apenas literal simples quando presente
-            if (g->init) {
-                bool okLit = dynamic_cast<IntLit*>(g->init.get()) != nullptr;
-                if (!okLit) {
-                    diag.error(0,0, "init global deve ser literal simples em '" + g->name + "'");
-                } else {
-                    // Compatibilidade de tipo
-                    Type ti = Type::inteiro();
-                    if (g->type.kind == Type::Logico) {
-                        if (!isIntLiteral01(g->init.get()))
-                            diag.error(0,0, "init global logico deve ser 0 ou 1 em '" + g->name + "'");
+            if (g->arrayLen > 0) {
+                // Lista de inicialização com const-expr
+                if (!g->initList.empty()) {
+                    if ((int)g->initList.size() > g->arrayLen) {
+                        diag.error(0,0, "lista de inicializacao maior que o tamanho do vetor em '" + g->name + "'");
                     }
-                    if (g->arrayLen > 0) {
-                        diag.error(0,0, "vetor global nao suporta inicializacao por literal nesta versao: '" + g->name + "'");
+                    g->constInitList.clear();
+                    g->constInitList.reserve(g->initList.size());
+                    for (auto& elt : g->initList) {
+                        auto cv = evalConst(elt.get());
+                        if (!cv.isConst) {
+                            diag.error(0,0, "init de vetor global deve ser const-expr em '" + g->name + "'");
+                            continue;
+                        }
+                        // cast seguro
+                        long long val = cv.i;
+                        if (g->type.kind == Type::Logico) {
+                            if (cv.ty.kind == Type::Inteiro && !(cv.i==0 || cv.i==1)) {
+                                diag.error(0,0, "elemento da lista deve ser booleano (0/1) em '" + g->name + "'");
+                            }
+                            val = (cv.ty.kind == Type::Logico) ? (cv.i?1:0) : (cv.i!=0?1:0);
+                        } else {
+                            val = (cv.ty.kind == Type::Logico) ? (cv.i?1:0) : cv.i;
+                        }
+                        g->constInitList.push_back(val);
                     }
+                    // não preenche aqui; padding no codegen
+                }
+            } else {
+                if (g->init) {
+                    auto cv = evalConst(g->init.get());
+                    if (!cv.isConst) {
+                        diag.error(0,0, "init global deve ser const-expr em '" + g->name + "'");
+                    } else {
+                        long long val = cv.i;
+                        if (g->type.kind == Type::Logico) {
+                            val = (cv.ty.kind == Type::Logico) ? (cv.i?1:0) : (cv.i!=0?1:0);
+                        } else {
+                            val = (cv.ty.kind == Type::Logico) ? (cv.i?1:0) : cv.i;
+                        }
+                        g->hasConstInit = true; g->constInit = val;
+                    }
+                } else if (g->isConst) {
+                    // opcional: exigir init; mantemos zero por padrão
                 }
             }
             globals.emplace(g->name, g->type);
+            globalsConst.emplace(g->name, g->isConst);
+            // salva valor para dependencias entre const
+            if (g->isConst) {
+                if (g->arrayLen == 0) {
+                    ConstVal cv; cv.isConst = true; cv.ty = g->type; cv.i = g->hasConstInit ? g->constInit : 0;
+                    constScalars[g->name] = cv;
+                } else {
+                    // lista (ou zeros)
+                    std::vector<long long> vals = g->constInitList;
+                    while ((int)vals.size() < g->arrayLen) vals.push_back(0);
+                    constArrays[g->name] = std::move(vals);
+                }
+            }
         }
     }
 
@@ -242,6 +403,21 @@ private:
             }
 
             if (auto v = dynamic_cast<VarDecl*>(sptr.get())){
+                // Resolve tamanho de vetor local via const-expr (usa somente const globais neste patch)
+                if (v->arrayLenExpr) {
+                    auto cv = evalConst(v->arrayLenExpr.get());
+                    if (!cv.isConst || cv.ty.kind != Type::Inteiro) {
+                        diag.error(0,0, "tamanho de vetor deve ser const-expr em '" + v->name + "'");
+                    } else {
+                        long long val = cv.i;
+                        if (val < 1 || val > INT_MAX) {
+                            diag.error(0,0, "tamanho de vetor invalido (>=1) em '" + v->name + "'");
+                        } else {
+                            v->arrayLen = (int)val;
+                            v->type.arrayLen = v->arrayLen;
+                        }
+                    }
+                }
                 if (!local.declare(v->name, v->type)){
                     diag.error(0,0, "variavel redeclarada: " + v->name);
                     ok = false;
@@ -284,6 +460,11 @@ private:
                     diag.error(0,0, "variavel nao declarada: " + a->name);
                     ok = false;
                 } else {
+                    // Proíbe atribuir a const
+                    if (local.getConst(a->name)) {
+                        diag.error(0,0, "nao e permitido atribuir a constante: " + a->name);
+                        ok = false;
+                    }
                     if (tv->isArray()){
                         diag.error(0,0, "atribuicao direta a array nao suportada (use indexacao)");
                         ok = false;
@@ -317,6 +498,12 @@ private:
                 }
             }
             else if (auto ai = dynamic_cast<AssignIndex*>(sptr.get())){
+                // Detecta const
+                if (auto vr = dynamic_cast<VarRef*>(ai->base.get())){
+                    if (local.getConst(vr->name)) {
+                        diag.error(0,0, "nao e permitido atribuir a constante: " + vr->name);
+                    }
+                }
                 Type tbase = checkExpr(ai->base.get(), local);
                 Type tidx  = checkExpr(ai->index.get(), local); // seu AST usa 'index'
                 if (!tbase.isArray()){
@@ -403,9 +590,68 @@ private:
                         ok = false;
                     }
                 }
+                loopDepth++;
                 bool retBody=false;
                 ok &= checkBlock(wh->body.get(), local, currentRet, retBody);
+                loopDepth--;
                 // não assumimos laço infinito
+            }
+            else if (auto fr = dynamic_cast<ForStmt*>(sptr.get())){
+                // For tem escopo próprio para init
+                Scope forScope(&local);
+                if (fr->init) {
+                    if (auto v = dynamic_cast<VarDecl*>(fr->init.get())){
+                        if (v->arrayLenExpr) {
+                            auto cv = evalConst(v->arrayLenExpr.get());
+                            if (!cv.isConst) diag.error(0,0, "tamanho de vetor deve ser const-expr em '"+v->name+"'");
+                            else { long long val=(v->type.kind==Type::Logico)?((cv.i!=0)?1:0):cv.i; if (val<1) diag.error(0,0,"tamanho de vetor invalido (>=1) em '"+v->name+"'"); else { v->arrayLen=(int)val; v->type.arrayLen=v->arrayLen; }}
+                        }
+                        if (!forScope.declare(v->name, v->type)) diag.error(0,0, "variavel redeclarada: "+v->name);
+                        if (v->init){
+                            Type ti = checkExpr(v->init.get(), forScope);
+                            bool okConv = isImplicitlyConvertible(ti, v->type)
+                                || (v->type.kind==Type::Logico && ti.kind==Type::Inteiro && (isIntLiteral01(v->init.get()) || isIntConst01(v->init.get())));
+                            if (!okConv) diag.error(0,0, "tipo incompativel na inicializacao de '"+v->name+"' (");
+                        }
+                    } else if (auto a = dynamic_cast<AssignStmt*>(fr->init.get())){
+                        const Type* tv = forScope.lookup(a->name);
+                        if (!tv) diag.error(0,0, "variavel nao declarada: "+a->name);
+                        else {
+                            Type te = checkExpr(a->value.get(), forScope);
+                            bool okConv = isImplicitlyConvertible(te, *tv) || (tv->kind==Type::Logico && te.kind==Type::Inteiro && (isIntLiteral01(a->value.get())||isIntConst01(a->value.get())));
+                            if (!okConv) diag.error(0,0, "tipo incompativel na atribuicao de '"+a->name+"'");
+                        }
+                    } else if (auto es = dynamic_cast<ExprStmt*>(fr->init.get())){
+                        (void)checkExpr(es->expr.get(), forScope);
+                    }
+                }
+                if (fr->cond) {
+                    Type tc = checkExpr(fr->cond.get(), forScope);
+                    if (tc.isArray() || tc.kind != Type::Logico) diag.error(0,0, "condicao de 'for' deve ser logico");
+                }
+                if (fr->step) {
+                    if (auto a = dynamic_cast<AssignStmt*>(fr->step.get())){
+                        const Type* tv = forScope.lookup(a->name);
+                        if (!tv) diag.error(0,0, "variavel nao declarada: "+a->name);
+                        else {
+                            Type te = checkExpr(a->value.get(), forScope);
+                            bool okConv = isImplicitlyConvertible(te, *tv) || (tv->kind==Type::Logico && te.kind==Type::Inteiro && (isIntLiteral01(a->value.get())||isIntConst01(a->value.get())));
+                            if (!okConv) diag.error(0,0, "tipo incompativel na atribuicao de '"+a->name+"'");
+                        }
+                    } else if (auto es = dynamic_cast<ExprStmt*>(fr->step.get())){
+                        (void)checkExpr(es->expr.get(), forScope);
+                    }
+                }
+                loopDepth++;
+                bool retBody=false;
+                ok &= checkBlock(fr->body.get(), forScope, currentRet, retBody);
+                loopDepth--;
+            }
+            else if (dynamic_cast<BreakStmt*>(sptr.get())){
+                if (loopDepth <= 0) diag.error(0,0, "'break' fora de laco");
+            }
+            else if (dynamic_cast<ContinueStmt*>(sptr.get())){
+                if (loopDepth <= 0) diag.error(0,0, "'continue' fora de laco");
             }
             else if (auto blk = dynamic_cast<Block*>(sptr.get())){
                 bool retInner=false;
@@ -425,7 +671,11 @@ private:
     bool checkFunc(FuncDecl* f){
         Scope top(nullptr);
         // injeta globais no escopo
-        for (auto& [name, ty] : globals) top.declare(name, ty);
+        for (auto& [name, ty] : globals) {
+            top.declare(name, ty);
+            auto itC = globalsConst.find(name);
+            if (itC != globalsConst.end()) top.setConstWhereDeclared(name, itC->second);
+        }
         // declara parâmetros
         for (auto& p : f->params){
             if (!top.declare(p.name, p.type)){
@@ -448,6 +698,7 @@ private:
     Type checkExpr(Expr* e, Scope& scope){
         // literais
         if (dynamic_cast<IntLit*>(e)) return Type::inteiro();
+        if (dynamic_cast<StringLit*>(e)) return Type::texto();
 
         // variáveis
         if (auto v = dynamic_cast<VarRef*>(e)){
@@ -491,13 +742,22 @@ private:
                 const std::string& op = b->op;
 
                 if (op=="+"||op=="-"||op=="*"||op=="/"||op=="%"){
-                    if (lt.isArray() || rt.isArray() ||
-                        lt.kind != Type::Inteiro || rt.kind != Type::Inteiro){
-                        diag.error(0,0, "operacao aritmetica requer inteiros escalares");
+                    if (lt.kind == Type::Texto || rt.kind == Type::Texto){
+                        diag.error(0,0, "operacao aritmetica nao suportada para texto");
+                    }
+                    if (lt.isArray() || rt.isArray()){
+                        diag.error(0,0, "operacao aritmetica requer escalares");
+                    }
+                    // aceita inteiro ou logico (coerção para inteiro)
+                    if (!((lt.kind==Type::Inteiro||lt.kind==Type::Logico) && (rt.kind==Type::Inteiro||rt.kind==Type::Logico))){
+                        diag.error(0,0, "operacao aritmetica requer inteiros/logicos");
                     }
                     return Type::inteiro();
                 }
                 if (op=="<"||op==">"||op=="<="||op==">="){
+                    if (lt.kind == Type::Texto || rt.kind == Type::Texto){
+                        diag.error(0,0, "comparacao nao suportada para texto");
+                    }
                     if (lt.isArray() || rt.isArray() ||
                         lt.kind != Type::Inteiro || rt.kind != Type::Inteiro){
                         diag.error(0,0, "comparacao requer inteiros escalares");
@@ -505,10 +765,23 @@ private:
                     return Type::logico();
                 }
                 if (op=="=="||op=="!="){
+                    if (lt.kind == Type::Texto || rt.kind == Type::Texto){
+                        diag.error(0,0, "igualdade nao suportada para texto");
+                    }
                     if (lt.kind != rt.kind ||
                         lt.isArray() != rt.isArray() ||
                         lt.arrayLen != rt.arrayLen){
                         diag.error(0,0, "igualdade entre tipos diferentes ("+lt.str()+" vs "+rt.str()+")");
+                    }
+                    return Type::logico();
+                }
+                if (op=="&&"||op=="||"){
+                    if (lt.isArray() || rt.isArray()){
+                        diag.error(0,0, "operador logico requer escalares");
+                    }
+                    // aceita inteiro/logico como bool-like
+                    if (!((lt.kind==Type::Inteiro||lt.kind==Type::Logico) && (rt.kind==Type::Inteiro||rt.kind==Type::Logico))){
+                        diag.error(0,0, "operador logico requer inteiro/logico");
                     }
                     return Type::logico();
                 }

@@ -1,0 +1,7 @@
+funcao main(): inteiro {
+  prints("A");
+  prints("B");
+  prints("C");
+  retorna 0;
+}
+

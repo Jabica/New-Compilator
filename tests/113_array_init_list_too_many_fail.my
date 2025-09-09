@@ -1,0 +1,3 @@
+inteiro V[2] = {1, 2, 3};
+funcao main(): inteiro { retorna 0; }
+

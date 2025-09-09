@@ -1,0 +1,5 @@
+funcao main(): inteiro {
+  break;
+  retorna 0;
+}
+

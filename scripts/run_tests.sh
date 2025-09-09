@@ -33,6 +33,20 @@ MUST_PASS=(
   # Patch 15: globals
   "$ROOT/tests/30_globals_scalar_ok.my"
   "$ROOT/tests/31_globals_array_ok.my"
+  "$ROOT/tests/32_const_global_scalar_ok.my"
+  "$ROOT/tests/33_const_global_array_ok.my"
+  "$ROOT/tests/34_global_array_init_list_ok.my"
+  "$ROOT/tests/35_bool_scalar_init_ok.my"
+  "$ROOT/tests/36_const_expr_scalar_ok.my"
+  "$ROOT/tests/37_const_expr_array_ok.my"
+  "$ROOT/tests/38_const_depends_on_const_ok.my"
+  "$ROOT/tests/39_const_index_const_ok.my"
+  "$ROOT/tests/40_array_len_constexpr_ok.my"
+  "$ROOT/tests/41_global_array_len_ok.my"
+  "$ROOT/tests/42_prints_ok.my"
+  "$ROOT/tests/43_prints_many_ok.my"
+  "$ROOT/tests/23_for_basic.my"
+  "$ROOT/tests/24_break_continue.my"
 
 )
 MUST_FAIL=(
@@ -61,6 +75,20 @@ MUST_FAIL=(
   # Patch 15: globals invalid
   "$ROOT/tests/110_global_init_nonliteral_fail.my"
   "$ROOT/tests/111_global_array_bad_len_fail.my"
+  "$ROOT/tests/112_assign_to_const_fail.my"
+  "$ROOT/tests/113_array_init_list_too_many_fail.my"
+  "$ROOT/tests/114_array_init_list_wrong_type_fail.my"
+  "$ROOT/tests/115_const_expr_uses_var_fail.my"
+  "$ROOT/tests/116_const_expr_call_fail.my"
+  "$ROOT/tests/117_const_index_nonconst_fail.my"
+  "$ROOT/tests/118_array_len_nonconst_fail.my"
+  "$ROOT/tests/119_array_len_zero_fail.my"
+  "$ROOT/tests/121_string_plus_fail.my"
+  "$ROOT/tests/122_string_assign_to_int_fail.my"
+  "$ROOT/tests/123_string_to_printi_fail.my"
+  "$ROOT/tests/107_break_outside_loop.my"
+  "$ROOT/tests/108_continue_outside_loop.my"
+  "$ROOT/tests/109_for_cond_not_bool.my"
 )
 
 pass=0
