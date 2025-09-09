@@ -863,7 +863,7 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
             llvm::Value* srcI8 = builder->CreateBitCast(srcLinePtr, anyPtr);
             // bytes = cols * 4
             llvm::Value* bytes32 = builder->CreateMul(cols, llvm::ConstantInt::get(i32, 4));
-            auto* i64 = llvm::Type::getInt64Ty(ctx);
+            //auto* i64 = llvm::Type::getInt64Ty(ctx);
             llvm::Value* bytes64 = builder->CreateZExt(bytes32, i64);
             auto align4 = llvm::MaybeAlign(4);
             builder->CreateMemCpy(dstI8, align4, srcI8, align4, bytes64);
