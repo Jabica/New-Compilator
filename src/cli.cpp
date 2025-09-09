@@ -54,7 +54,8 @@ int run(int argc, char** argv) {
     std::string outObjPath;
     bool runMode = false;
     bool emitEXE = false;
-    std::string outExePath;
+    std::string outEXEPath;
+    std::string rtPath;
     bool emitASM = false;
     std::string outAsmPath;
     bool emitBC = false;
@@ -65,6 +66,15 @@ int run(int argc, char** argv) {
     bool optProvided = false;          // se o usuário passou --opt
     std::string optPipeline;           // pipeline textual custom
     std::string targetTripleArg;       // --target=<triple>
+
+    auto readRtArg = [&](int startIdx){
+        for (int i = startIdx; i < argc; ++i) {
+            std::string a = argv[i];
+            if (a.rfind("--rt=", 0) == 0) {
+                rtPath = a.substr(5);
+            }
+        }
+    };
 
     // Pre-scan: capture opções de otimização em qualquer posição
     for (int i = 1; i < argc; ++i) {
@@ -101,8 +111,9 @@ int run(int argc, char** argv) {
         std::cout << "  --emit-llvm=<arq>    Alias de --emit-ll=<arq>\n";
         std::cout << "  --emit-obj           Gera objeto nativo (.o) (sem -o: salva em <input>.o)\n";
         std::cout << "  --emit-obj=<arq>     Gera objeto nativo no arquivo informado\n";
-        std::cout << "  --emit-exe           Gera executavel nativo (sem -o: salva em <input> sem extensao)\n";
-        std::cout << "  --emit-exe=<arq>     Gera executavel no arquivo informado\n";
+        std::cout << "  --emit-exe           Gera executavel nativo (sem -o: <input> sem sufixo)\n";
+        std::cout << "  --emit-exe=<arq>     Gera executavel nativo no arquivo informado\n";
+        std::cout << "  --rt=<arq>           Caminho do runtime (libmycc_runtime.a). Default embutido.\n";
         std::cout << "  --emit-asm           Gera assembly (.s) (sem -o: salva em <input>.s)\n";
         std::cout << "  --emit-asm=<arq>     Gera assembly textual no arquivo informado\n";
         std::cout << "  --emit-bc            Gera bitcode LLVM (.bc) (sem -o: <input>.bc)\n";
@@ -198,6 +209,7 @@ int run(int argc, char** argv) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+            readRtArg(idx);
             if (std::string(argv[idx]) == "-o") {
                 if (argc < idx + 3) {
                     std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
@@ -222,6 +234,7 @@ int run(int argc, char** argv) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+            readRtArg(idx);
             if (std::string(argv[idx]) == "-o") {
                 if (argc < idx + 3) {
                     std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
@@ -234,24 +247,30 @@ int run(int argc, char** argv) {
             }
         } else if (modeEmitEXE) {
             emitEXE = true;
-            // permite --emit-exe=out
             auto eq = mode.find('=');
-            if (eq != std::string::npos) {
-                outExePath = mode.substr(eq + 1);
-            }
+            if (eq != std::string::npos) outEXEPath = mode.substr(eq + 1);
 
-            int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
+            int idx = consumedOptFirst ? 3 : 2;
             if (argc <= idx) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+
+            readRtArg(idx);
+
+            while (idx < argc && std::string(argv[idx]).rfind("--rt=",0)==0) ++idx;
+            if (argc <= idx) {
+                std::cerr << "error: faltou o caminho do arquivo .my\n";
+                return 1;
+            }
+
             if (std::string(argv[idx]) == "-o") {
                 if (argc < idx + 3) {
                     std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
                     return 1;
                 }
-                outExePath = argv[idx + 1];
-                file       = argv[idx + 2];
+                if (outEXEPath.empty()) outEXEPath = argv[idx + 1];
+                file = argv[idx + 2];
             } else {
                 file = argv[idx];
             }
@@ -267,6 +286,7 @@ int run(int argc, char** argv) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+            readRtArg(idx);
             if (std::string(argv[idx]) == "-o") {
                 if (argc < idx + 3) {
                     std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
@@ -289,6 +309,7 @@ int run(int argc, char** argv) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+            readRtArg(idx);
             if (std::string(argv[idx]) == "-o") {
                 if (argc < idx + 3) {
                     std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
@@ -333,6 +354,7 @@ int run(int argc, char** argv) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+            readRtArg(idx);
             if (std::string(argv[idx]) == "-o") {
                 if (argc < idx + 3) {
                     std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
@@ -350,6 +372,7 @@ int run(int argc, char** argv) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+            readRtArg(idx);
             file = argv[idx];
         } else {
             // Demais modos esperam o arquivo em argv[2]
@@ -358,6 +381,7 @@ int run(int argc, char** argv) {
                 std::cerr << "error: faltou o caminho do arquivo .my\n";
                 return 1;
             }
+            readRtArg(idx);
             file = argv[idx];
         }
     }
@@ -444,17 +468,7 @@ int run(int argc, char** argv) {
 
         // Marcar triple no IR, se fornecido
         if (!targetTripleArg.empty()) {
-            module->setTargetTriple(llvm::Triple(targetTripleArg));
-        }
-
-        // Marcar triple no IR, se fornecido
-        if (!targetTripleArg.empty()) {
-            module->setTargetTriple(llvm::Triple(targetTripleArg));
-        }
-
-        // Marcar triple no IR, se fornecido
-        if (!targetTripleArg.empty()) {
-            module->setTargetTriple(llvm::Triple(targetTripleArg));
+            module->setTargetTriple(targetTripleArg);
         }
 
         // Verifica IR
@@ -644,7 +658,7 @@ int run(int argc, char** argv) {
 
         auto targetTriple = llvm::sys::getDefaultTargetTriple();
         llvm::Triple TT(targetTriple);
-        module->setTargetTriple(TT);
+        module->setTargetTriple(targetTriple);
 
         std::string terr;
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget("", TT, terr);
@@ -656,7 +670,7 @@ int run(int argc, char** argv) {
         llvm::TargetOptions opt;
         auto rm = llvm::Reloc::Model::PIC_;
         std::unique_ptr<llvm::TargetMachine> TM(
-            target->createTargetMachine(TT, "generic", "", opt, rm)
+            target->createTargetMachine(targetTriple, "generic", "", opt, rm)
         );
         module->setDataLayout(TM->createDataLayout());
 
@@ -728,7 +742,7 @@ int run(int argc, char** argv) {
         // Triple escolhido ou nativo
         llvm::Triple TT(targetTripleArg.empty() ? llvm::sys::getDefaultTargetTriple()
                                                : targetTripleArg);
-        module->setTargetTriple(TT);
+        module->setTargetTriple(TT.getTriple());
 
         std::string terr;
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget("", TT, terr);
@@ -740,7 +754,7 @@ int run(int argc, char** argv) {
         llvm::TargetOptions opt;
         auto rm = llvm::Reloc::Model::PIC_;
         std::unique_ptr<llvm::TargetMachine> TM(
-            target->createTargetMachine(TT, "generic", "", opt, rm)
+            target->createTargetMachine(TT.getTriple(), "generic", "", opt, rm)
         );
 
         module->setDataLayout(TM->createDataLayout());
@@ -793,8 +807,7 @@ int run(int argc, char** argv) {
             bool ok = sem.run(prog.get());
             if (!ok || diag.hadError) return 1;
         }
-
-        // 2) Gera IR
+        // 2) IR
         Codegen cg("mycc_module", diag);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
@@ -805,7 +818,7 @@ int run(int argc, char** argv) {
             return 1;
         }
 
-        // 4) Inicializa alvo nativo
+        // 4) Baixa para .o (reuso do pipeline de objeto do seu --emit-obj)
         static bool inited = false;
         if (!inited) {
             llvm::InitializeNativeTarget();
@@ -813,53 +826,34 @@ int run(int argc, char** argv) {
             llvm::InitializeNativeTargetAsmParser();
             inited = true;
         }
-
-        auto targetTriple = llvm::sys::getDefaultTargetTriple();
-        llvm::Triple TT(targetTriple);
+        auto TT = llvm::sys::getDefaultTargetTriple();
         module->setTargetTriple(TT);
 
         std::string terr;
-        const llvm::Target* target = llvm::TargetRegistry::lookupTarget("", TT, terr);
-        if (!target) {
-            std::cerr << "error: " << terr << "\n";
-            return 1;
-        }
+        llvm::Triple TTT(TT);
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget("", TTT, terr);
+        if (!target) { std::cerr << "error: " << terr << "\n"; return 1; }
 
         llvm::TargetOptions opt;
         auto rm = llvm::Reloc::Model::PIC_;
-        std::unique_ptr<llvm::TargetMachine> TM(
-            target->createTargetMachine(TT, "generic", "", opt, rm)
-        );
+        std::unique_ptr<llvm::TargetMachine> TM(target->createTargetMachine(TTT.getTriple(), "generic", "", opt, rm));
         module->setDataLayout(TM->createDataLayout());
 
-        // Otimização opcional
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
-            std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
-                std::cerr << "error: " << e << "\n"; return 1; }
-            if (llvm::verifyModule(*module, &llvm::errs())) {
-                std::cerr << "error: IR invalido apos otimizacao\n"; return 1; }
+        // 5) Caminhos
+        // outEXE padrão: <input> sem sufixo
+        if (outEXEPath.empty()) {
+            outEXEPath = file;
+            auto p = outEXEPath.find_last_of('.');
+            if (p != std::string::npos) outEXEPath = outEXEPath.substr(0, p);
         }
+        // objeto temporário
+        std::string objPath = "/tmp/mycc_exe.o";
 
-        // 5) Caminhos: .o temporário e exe final
-        std::string base = file;
-        auto pos = base.find_last_of('/');
-        std::string leaf = (pos==std::string::npos) ? base : base.substr(pos+1);
-        auto dot = leaf.find_last_of('.');
-        if (dot != std::string::npos) leaf = leaf.substr(0, dot);
-
-        std::string objTmp = std::string("/tmp/") + leaf + ".o";
-        if (outExePath.empty()) {
-            outExePath = std::string("/tmp/") + leaf;
-        }
-
-        // 6) Emitir .o
+        // 6) Emite .o
         {
             std::error_code ec;
-            llvm::raw_fd_ostream dest(objTmp, ec, llvm::sys::fs::OF_None);
-            if (ec) {
-                std::cerr << objTmp << ": error: " << ec.message() << "\n";
-                return 1;
-            }
+            llvm::raw_fd_ostream dest(objPath, ec, llvm::sys::fs::OF_None);
+            if (ec) { std::cerr << objPath << ": error: " << ec.message() << "\n"; return 1; }
             llvm::legacy::PassManager pass;
             if (TM->addPassesToEmitFile(pass, dest, nullptr, llvm::CodeGenFileType::ObjectFile)) {
                 std::cerr << "error: este alvo nao suporta emissao de objeto\n";
@@ -869,67 +863,32 @@ int run(int argc, char** argv) {
             dest.flush();
         }
 
-        // 7) Linkar com clang + runtime
-        auto shellQuote = [](const std::string& s) {
-            std::string out = "'";
-            for (char c : s) {
-                if (c == '\'') out += "'\"'\"'";
-                else out += c;
-            }
-            out += "'";
-            return out;
-        };
-        auto runAndCapture = [](const char* cmd) -> std::string {
-            std::string out;
-            FILE* p = popen(cmd, "r");
-            if (!p) return out;
-            char buf[256];
-            while (fgets(buf, sizeof(buf), p)) out += buf;
-            pclose(p);
-            while (!out.empty() && (out.back()=='\n' || out.back()=='\r' || out.back()==' ' || out.back()=='\t')) out.pop_back();
-            return out;
-        };
-
-        std::string clangBin = "clang";
-#ifdef __APPLE__
-        // opcional: forcar arquitetura ao clang do sistema
+        // 7) Descobre runtime (ordem: --rt=... > macro embutida > erro)
+        std::string rt = rtPath;
+#ifdef MYCC_DEFAULT_RT_PATH
+        if (rt.empty()) rt = MYCC_DEFAULT_RT_PATH;
 #endif
-
-        std::string archFlag;
-        if (TT.isArch64Bit()) {
-            if (TT.getArch() == llvm::Triple::aarch64) archFlag = " -arch arm64";
-            else if (TT.getArch() == llvm::Triple::x86_64) archFlag = " -arch x86_64";
-        }
-
-#ifndef MYCC_RUNTIME_LIB
-#  error "MYCC_RUNTIME_LIB nao definido pelo CMake"
-#endif
-
-        std::string cmd = clangBin
-            + archFlag
-            + " -o " + shellQuote(outExePath)
-            + " " + shellQuote(objTmp)
-            + " " + shellQuote(MYCC_RUNTIME_LIB);
-        // Se o SDK padrão estiver incorreto no ambiente, force via xcrun
-#ifdef __APPLE__
-        {
-            std::string sysroot = runAndCapture("xcrun --sdk macosx --show-sdk-path 2>/dev/null");
-            if (!sysroot.empty()) {
-                cmd += " -isysroot " + shellQuote(sysroot);
-            }
-            // Alinha a versão mínima do macOS ao alvo das libs LLVM (evita warnings)
-            cmd += " -mmacosx-version-min=15.0";
-        }
-#endif
-
-        int rc = std::system(cmd.c_str());
-        if (rc != 0) {
-            std::cerr << "error: link falhou (clang retornou " << rc << ")\n";
-            std::cerr << "cmd: " << cmd << "\n";
+        if (rt.empty()) {
+            std::cerr << "error: runtime nao informado. Use --rt=<caminho_para_libmycc_runtime.a>\n";
             return 1;
         }
 
-        std::cout << "OK: executavel salvo em " << outExePath << "\n";
+        // 8) Link (usa clang)
+        std::string linkCmd =
+#ifdef __APPLE__
+            "clang -arch arm64 -mmacosx-version-min=15.0 ";
+#else
+            "clang ";
+#endif
+        linkCmd += objPath + " \"" + rt + "\" -o \"" + outEXEPath + "\"";
+
+        int rc = std::system(linkCmd.c_str());
+        if (rc != 0) {
+            std::cerr << "error: linker falhou (cmd: " << linkCmd << "), rc=" << rc << "\n";
+            return 1;
+        }
+
+        std::cout << "OK: executavel salvo em " << outEXEPath << "\n";
         return 0;
     }
 

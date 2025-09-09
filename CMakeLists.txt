@@ -70,9 +70,7 @@ llvm_map_components_to_libnames(LLVM_LIBS
 # Linke LLVM na biblioteca (se a lib usa LLVM diretamente)
 target_link_libraries(mycc PUBLIC ${LLVM_LIBS})
 
-# Expor caminho absoluto da lib do runtime para o CLI invocar o linker externo
-set(MYCC_RUNTIME_LIB "${CMAKE_BINARY_DIR}/libmycc_runtime.a")
-target_compile_definitions(mycc PRIVATE MYCC_RUNTIME_LIB="${MYCC_RUNTIME_LIB}")
+target_compile_definitions(mycc PRIVATE MYCC_DEFAULT_RT_PATH="${CMAKE_BINARY_DIR}/libmycc_runtime.a")
 
 # === EXECUTÁVEL ===
 add_executable(mycc_cli src/main.cpp)
