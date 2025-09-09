@@ -54,6 +54,17 @@ MUST_PASS=(
   "$ROOT/tests/45_switch_default.my"
   "$ROOT/tests/46_switch_multi_cases.my"
   "$ROOT/tests/47_switch_nested.my"
+  "$ROOT/tests/48_break_in_while.my"
+  "$ROOT/tests/49_break_in_switch.my"
+  "$ROOT/tests/50_fallthrough_to_next_case.my"
+  "$ROOT/tests/51_fallthrough_into_default.my"
+  "$ROOT/tests/52_nested_breaks.my"
+  "$ROOT/tests/53_continue_simple.my"
+  "$ROOT/tests/54_continue_first_stmt.my"
+  "$ROOT/tests/55_continue_nested_with_break.my"
+  "$ROOT/tests/56_for_sum_skip_even_para.my"
+  "$ROOT/tests/57_for_no_init_inc_ok_para.my"
+  "$ROOT/tests/58_for_break_and_continue_para.my"
 
 )
 MUST_FAIL=(
@@ -100,6 +111,12 @@ MUST_FAIL=(
   "$ROOT/tests/124_switch_duplicate_case.my"
   "$ROOT/tests/125_switch_non_int_cond.my"
   "$ROOT/tests/126_switch_non_int_case.my"
+  "$ROOT/tests/127_break_outside_loop_or_switch.my"
+  "$ROOT/tests/128_fallthrough_outside_switch.my"
+  "$ROOT/tests/129_fallthrough_not_last_stmt.my"
+  "$ROOT/tests/130_fallthrough_in_last_case_without_next.my"
+  "$ROOT/tests/131_continue_outside_while.my"
+  "$ROOT/tests/133_for_cond_not_bool_para.my"
 )
 
 pass=0

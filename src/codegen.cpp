@@ -536,13 +536,28 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
     if (auto fr  = dynamic_cast<ForStmt*>(s))   { emitFor(fr, scope); return; }
     if (auto sw  = dynamic_cast<SwitchStmt*>(s)) { emitSwitch(sw, scope); return; }
     if (auto brk = dynamic_cast<BreakStmt*>(s)) {
-        if (loopStack.empty()) { diag.error(0,0, "codegen: 'break' fora de laco"); return; }
-        builder->CreateBr(loopStack.back().endBB);
+        if (!breakTargets.empty()) {
+            builder->CreateBr(breakTargets.back());
+        } else if (!loopStack.empty()) {
+            builder->CreateBr(loopStack.back().endBB);
+        } else {
+            diag.error(0,0, "codegen: 'break' fora de laco/switch");
+        }
         return;
     }
     if (auto cont = dynamic_cast<ContinueStmt*>(s)) {
-        if (loopStack.empty()) { diag.error(0,0, "codegen: 'continue' fora de laco"); return; }
-        builder->CreateBr(loopStack.back().stepBB);
+        if (!continueTargets.empty()) {
+            builder->CreateBr(continueTargets.back());
+        } else if (!loopStack.empty()) {
+            builder->CreateBr(loopStack.back().stepBB);
+        } else {
+            diag.error(0,0, "codegen: 'continue' fora de laco");
+        }
+        return;
+    }
+    if (auto ft = dynamic_cast<FallthroughStmt*>(s)) {
+        if (fallthroughTargets.empty()) { diag.error(0,0, "codegen: 'fallthrough' fora de case"); return; }
+        builder->CreateBr(fallthroughTargets.back());
         return;
     }
 
@@ -801,7 +816,12 @@ void Codegen::emitWhile(WhileStmt* s, Scope& scope) {
 
     F->insert(F->end(), bodyBB);
     builder->SetInsertPoint(bodyBB);
+    // R2-03/04: permitir break/continue dentro do while
+    breakTargets.push_back(endBB);
+    continueTargets.push_back(condBB);
     emitBlock(s->body.get(), scope);
+    continueTargets.pop_back();
+    breakTargets.pop_back();
     if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(condBB);
 
     loopStack.pop_back();
@@ -915,12 +935,22 @@ void Codegen::emitSwitch(SwitchStmt* s, Scope& scope) {
         if (nextTestBB != defaultBB) F->insert(F->end(), nextTestBB);
     }
 
+    // push destino de 'break' para todo o switch
+    breakTargets.push_back(endBB);
+
     // CASE bodies
     for (size_t i=0;i<caseBBs.size();++i) {
         auto [val, caseBB] = caseBBs[i];
         F->insert(F->end(), caseBB);
         builder->SetInsertPoint(caseBB);
+        // calcula o destino de fallthrough: proximo case se houver; senao default, senao end
+        llvm::BasicBlock* nextArm = nullptr;
+        if (i + 1 < caseBBs.size()) nextArm = caseBBs[i+1].second;
+        else                         nextArm = (defaultBB != endBB ? defaultBB : endBB);
+
+        fallthroughTargets.push_back(nextArm);
         emitBlock(s->cases[i].body.get(), scope);
+        fallthroughTargets.pop_back();
         if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(endBB);
     }
 
@@ -928,10 +958,14 @@ void Codegen::emitSwitch(SwitchStmt* s, Scope& scope) {
     if (defaultBB != endBB) {
         F->insert(F->end(), defaultBB);
         builder->SetInsertPoint(defaultBB);
+        // default nao tem proximo arm: fallthrough -> end
+        fallthroughTargets.push_back(endBB);
         emitBlock(s->deflt.get(), scope);
+        fallthroughTargets.pop_back();
         if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(endBB);
     }
 
+    breakTargets.pop_back();
     // END
     F->insert(F->end(), endBB);
     builder->SetInsertPoint(endBB);

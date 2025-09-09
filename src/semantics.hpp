@@ -179,6 +179,9 @@ public:
 private:
     Diag& diag;
     int loopDepth = 0;
+    int switchDepth = 0; // R2-03
+    std::vector<int> caseArmsRemaining; // R2-03
+    int insideCase = 0; // R2-03
     std::unordered_map<std::string, FuncSig> funcs;
     std::unordered_map<std::string, Type> globals;
     std::unordered_map<std::string, bool> globalsConst;
@@ -675,21 +678,67 @@ private:
                         diag.error(0,0, std::string("valor de 'case' duplicado: ") + std::to_string(c.value));
                     }
                 }
-                // checa blocos dos arms
-                for (auto& c : sw->cases) {
+                // contexto de switch para 'break' e verificação de fallthrough
+                switchDepth++;
+                int totalArms = (int)sw->cases.size() + (sw->deflt ? 1 : 0);
+                int remaining = totalArms;
+
+                for (size_t i=0;i<sw->cases.size();++i) {
+                    --remaining;
+                    insideCase++;
+                    caseArmsRemaining.push_back(remaining);
+                    // 'fallthrough' deve ser última instrução se presente
+                    if (!sw->cases[i].body->stmts.empty()) {
+                        for (size_t k=0;k+1<sw->cases[i].body->stmts.size();++k) {
+                            if (dynamic_cast<FallthroughStmt*>(sw->cases[i].body->stmts[k].get())) {
+                                diag.error(0,0, "'fallthrough' deve ser a ultima instrucao do case");
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
                     bool retArm=false;
-                    ok &= checkBlock(c.body.get(), local, currentRet, retArm);
+                    ok &= checkBlock(sw->cases[i].body.get(), local, currentRet, retArm);
+                    caseArmsRemaining.pop_back();
+                    insideCase--;
                 }
                 if (sw->deflt) {
+                    --remaining;
+                    insideCase++;
+                    caseArmsRemaining.push_back(remaining);
+                    if (!sw->deflt->stmts.empty()) {
+                        for (size_t k=0;k+1<sw->deflt->stmts.size();++k) {
+                            if (dynamic_cast<FallthroughStmt*>(sw->deflt->stmts[k].get())) {
+                                diag.error(0,0, "'fallthrough' deve ser a ultima instrucao do case");
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
                     bool retDef=false;
                     ok &= checkBlock(sw->deflt.get(), local, currentRet, retDef);
+                    caseArmsRemaining.pop_back();
+                    insideCase--;
                 }
+                switchDepth--;
             }
             else if (dynamic_cast<BreakStmt*>(sptr.get())){
-                if (loopDepth <= 0) diag.error(0,0, "'break' fora de laco");
+                if (loopDepth <= 0 && switchDepth <= 0) diag.error(0,0, "'break' fora de laco ou switch");
             }
             else if (dynamic_cast<ContinueStmt*>(sptr.get())){
                 if (loopDepth <= 0) diag.error(0,0, "'continue' fora de laco");
+            }
+            else if (dynamic_cast<FallthroughStmt*>(sptr.get())){
+                if (insideCase <= 0) {
+                    diag.error(0,0, "'fallthrough' so pode aparecer dentro de um 'case' de 'switch'");
+                    ok = false;
+                } else {
+                    int remain = caseArmsRemaining.empty() ? 0 : caseArmsRemaining.back();
+                    if (remain <= 0) {
+                        diag.error(0,0, "'fallthrough' no ultimo braco do switch");
+                        ok = false;
+                    }
+                }
             }
             else if (auto blk = dynamic_cast<Block*>(sptr.get())){
                 bool retInner=false;

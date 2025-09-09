@@ -259,6 +259,14 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
         c->loc = LFrom(peek(), filename);
         return c;
     }
+    // fallthrough
+    if (peek().kind == TokenKind::KwFallthrough) {
+        pos++;
+        auto t = expect(TokenKind::Semicolon, ";"); (void)t;
+        auto f = std::make_unique<FallthroughStmt>();
+        f->loc = LFrom(peek(), filename);
+        return f;
+    }
 
     // atribuicao (IDENT '=' ...)
     if (peek().kind == TokenKind::Identifier && peek(1).kind == TokenKind::Assign) {

@@ -104,6 +104,12 @@ private:
     // Patch 20: controle de laços para break/continue
     struct LoopCtx { llvm::BasicBlock* condBB; llvm::BasicBlock* stepBB; llvm::BasicBlock* endBB; };
     std::vector<LoopCtx> loopStack;
+
+    // R2-03: destinos de break/fallthrough
+    std::vector<llvm::BasicBlock*> breakTargets;      // topo: destino de 'break'
+    std::vector<llvm::BasicBlock*> fallthroughTargets; // topo: proximo case/default
+    // R2-04: destino de 'continue'
+    std::vector<llvm::BasicBlock*> continueTargets;    // topo: volta para cond
 };
 
 } // namespace mycc

@@ -276,6 +276,11 @@ struct ContinueStmt : Stmt {
     void dump(std::ostream& os, int d=0) const override { indent(os,d); os << "Continue\n"; }
 };
 
+// R2-03: fallthrough;
+struct FallthroughStmt : Stmt {
+    void dump(std::ostream& os, int d=0) const override { indent(os,d); os << "Fallthrough\n"; }
+};
+
 struct ForStmt : Stmt {
     std::unique_ptr<Stmt>  init; // VarDecl/Assign/ExprStmt ou null
     std::unique_ptr<Expr>  cond; // null => true

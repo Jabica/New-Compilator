@@ -18,6 +18,7 @@ static TokenKind keywordKind(const std::string& s) {
         {"do", TokenKind::KwDo},
         {"faca", TokenKind::KwDo},
         {"for", TokenKind::KwFor},
+        {"para", TokenKind::KwFor},
         {"break", TokenKind::KwBreak},
         {"continue", TokenKind::KwContinue},
         {"inteiro", TokenKind::KwInteiro},
@@ -29,6 +30,7 @@ static TokenKind keywordKind(const std::string& s) {
         {"switch", TokenKind::KwSwitch},
         {"case", TokenKind::KwCase},
         {"default", TokenKind::KwDefault},
+        {"fallthrough", TokenKind::KwFallthrough},
     };
     auto it = kw.find(s);
     return it == kw.end() ? TokenKind::Identifier : it->second;

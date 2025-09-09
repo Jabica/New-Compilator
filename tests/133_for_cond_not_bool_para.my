@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+  variavel i: inteiro = 0;
+  para (i = 0; 123; i = i + 1) {
+    retorna 0;
+  }
+  retorna 1;
+}
+

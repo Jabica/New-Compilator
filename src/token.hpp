@@ -12,7 +12,7 @@ enum class TokenKind {
     KwFuncao, KwVariavel, KwRetorna, KwSe, KwSenao, KwEnquanto,
     KwFor, KwBreak, KwContinue,
     KwInteiro, KwLogico, KwVazio, KwVerdadeiro, KwFalso, KwConst,
-    KwSwitch, KwCase, KwDefault,
+    KwSwitch, KwCase, KwDefault, KwFallthrough,
     KwDo, KwWhile,
     STRING,
     // Símbolos
@@ -57,6 +57,7 @@ inline const char* to_string(TokenKind k) {
         case TokenKind::KwSwitch: return "switch";
         case TokenKind::KwCase: return "case";
         case TokenKind::KwDefault: return "default";
+        case TokenKind::KwFallthrough: return "fallthrough";
         case TokenKind::KwDo: return "do";
         case TokenKind::KwWhile: return "while";
         case TokenKind::STRING: return "STRING";
