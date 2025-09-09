@@ -502,11 +502,11 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
             if (rhsIsSlice || rhsIsCol) {
                 Slice1D src = getSlice1D(ai->value.get(), scope);
                 if (!src.isValid()) { diag.error(0,0, "atribuicao de slice: rhs nao e view 1D"); return; }
-                emitCopySlice(dst, src);
+                emitCopySliceSmart(dst, src);
                 return;
             } else {
                 llvm::Value* v = emitExpr(ai->value.get(), scope);
-                emitFillSlice(dst, v);
+                emitFillSliceSmart(dst, v);
                 return;
             }
         }
@@ -680,15 +680,13 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
                 diag.error(0,0, "copy espera 2 argumentos");
                 return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             }
-            ViewInfo dst = getContiguous1DView(c->args[0].get(), scope);
-            ViewInfo src = getContiguous1DView(c->args[1].get(), scope);
-            if (!dst.basePtrI8 || !dst.lenBytes || !src.basePtrI8 || !src.lenBytes) {
-                diag.error(0,0, "copy: views nao-contiguos ou indefinidos");
+            Slice1D dst = getSlice1D(c->args[0].get(), scope);
+            Slice1D src = getSlice1D(c->args[1].get(), scope);
+            if (!dst.isValid() || !src.isValid()) {
+                diag.error(0,0, "copy: views invalidos/nao-1D");
                 return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             }
-            // opcional: se ambos tamanhos forem constantes, poderíamos comparar
-            auto align = llvm::MaybeAlign(dst.elemBytes);
-            builder->CreateMemCpy(dst.basePtrI8, align, src.basePtrI8, align, dst.lenBytes);
+            emitCopySliceSmart(dst, src);
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
         if (c->callee == "fill") {
@@ -696,18 +694,306 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
                 diag.error(0,0, "fill espera 2 argumentos");
                 return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             }
-            ViewInfo dst = getContiguous1DView(c->args[0].get(), scope);
-            if (!dst.basePtrI8 || !dst.lenBytes) {
-                diag.error(0,0, "fill: view nao-contiguo ou indefinido");
+            Slice1D dst = getSlice1D(c->args[0].get(), scope);
+            if (!dst.isValid()) {
+                diag.error(0,0, "fill: view invalido/nao-1D");
                 return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             }
             llvm::Value* val = emitExpr(c->args[1].get(), scope);
-            if (!val->getType()->isIntegerTy(32)) val = builder->CreateZExtOrTrunc(val, llvm::Type::getInt32Ty(ctx));
-            llvm::Value* valI8 = builder->CreateTrunc(val, llvm::Type::getInt8Ty(ctx));
-            auto align = llvm::MaybeAlign(dst.elemBytes);
-            builder->CreateMemSet(dst.basePtrI8, valI8, dst.lenBytes, align);
+            emitFillSliceSmart(dst, val);
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
+        // R2-15: intrínsecas 2D geradas em IR
+        if (c->callee == "copy2d") {
+            if (c->args.size() != 8) {
+                diag.error(0,0, "copy2d: aridade invalida (esperado 8)");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            auto* dstRef = dynamic_cast<VarRef*>(c->args[0].get());
+            auto* srcRef = dynamic_cast<VarRef*>(c->args[3].get());
+            if (!dstRef || !srcRef) {
+                diag.error(0,0, "copy2d: primeiro e quarto argumentos devem ser variaveis de array");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            VarSlot* dstS = scope.lookup(dstRef->name);
+            VarSlot* srcS = scope.lookup(srcRef->name);
+            if (!dstS || !srcS) {
+                diag.error(0,0, "copy2d: variavel nao declarada (dst ou src)");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+
+            auto toI32 = [&](Expr* ex)->llvm::Value*{
+                llvm::Value* v = emitExpr(ex, scope);
+                if (!v->getType()->isIntegerTy(32)) v = builder->CreateZExtOrTrunc(v, llvm::Type::getInt32Ty(ctx));
+                return v;
+            };
+            llvm::Value* dstStride = toI32(c->args[1].get());
+            llvm::Value* dstIdx    = toI32(c->args[2].get());
+            llvm::Value* srcStride = toI32(c->args[4].get());
+            llvm::Value* srcIdx    = toI32(c->args[5].get());
+            llvm::Value* cols      = toI32(c->args[6].get());
+            llvm::Value* rows      = toI32(c->args[7].get());
+
+            auto gepElem = [&](VarSlot* S, llvm::Value* off, const std::string& nm){
+                if (S->isGlobal && S->isArray) {
+                    auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                    return (llvm::Value*)builder->CreateInBoundsGEP(
+                        llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                        S->ptr, std::array<llvm::Value*,2>{zero, off}, nm);
+                } else {
+                    return (llvm::Value*)builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, nm);
+                }
+            };
+
+            llvm::Function* F = builder->GetInsertBlock()->getParent();
+            auto* i32 = llvm::Type::getInt32Ty(ctx);
+            auto* i64 = llvm::Type::getInt64Ty(ctx);
+            auto* i8p = llvm::PointerType::get(ctx, 0);
+
+            // R2-17: contiguous fast-path (single memcpy) when allowed
+            bool tryContig = (fast2DMode == Fast2DMode::Always) || (fast2DMode == Fast2DMode::Auto);
+            if (tryContig) {
+                // cond1: cols == dstStride == srcStride
+                llvm::Value* cols_eq_dst = builder->CreateICmpEQ(cols, dstStride);
+                llvm::Value* cols_eq_src = builder->CreateICmpEQ(cols, srcStride);
+                llvm::Value* cond1 = builder->CreateAnd(cols_eq_dst, cols_eq_src);
+                // cond2: dstIdx % dstStride == 0 && srcIdx % srcStride == 0
+                llvm::Value* dstRem = builder->CreateSRem(dstIdx, dstStride);
+                llvm::Value* srcRem = builder->CreateSRem(srcIdx, srcStride);
+                llvm::Value* dstAligned = builder->CreateICmpEQ(dstRem, llvm::ConstantInt::get(i32, 0));
+                llvm::Value* srcAligned = builder->CreateICmpEQ(srcRem, llvm::ConstantInt::get(i32, 0));
+                llvm::Value* cond2 = builder->CreateAnd(dstAligned, srcAligned);
+                llvm::Value* contiguous = builder->CreateAnd(cond1, cond2);
+
+                auto* bbContig = llvm::BasicBlock::Create(ctx, "copy2d.contig", F);
+                auto* bbRow    = llvm::BasicBlock::Create(ctx, "copy2d.row");
+                auto* bbEnd    = llvm::BasicBlock::Create(ctx, "copy2d.end");
+                builder->CreateCondBr(contiguous, bbContig, bbRow);
+
+                // CONTIG: single memcpy
+                builder->SetInsertPoint(bbContig);
+                llvm::Value* dstBasePtr = gepElem(dstS, dstIdx, "copy2d.dst.base");
+                llvm::Value* srcBasePtr = gepElem(srcS, srcIdx, "copy2d.src.base");
+                llvm::Value* dstI8 = builder->CreateBitCast(dstBasePtr, i8p);
+                llvm::Value* srcI8 = builder->CreateBitCast(srcBasePtr, i8p);
+                llvm::Value* elems = builder->CreateMul(rows, cols);
+                llvm::Value* bytes32 = builder->CreateMul(elems, llvm::ConstantInt::get(i32, 4));
+                llvm::Value* bytes64 = builder->CreateZExt(bytes32, i64);
+                auto align4 = llvm::MaybeAlign(4);
+                builder->CreateMemCpy(dstI8, align4, srcI8, align4, bytes64);
+                builder->CreateBr(bbEnd);
+
+                // fallback: row-wise memcpy inside r loop
+                F->insert(F->end(), bbRow);
+                builder->SetInsertPoint(bbRow);
+                // r loop
+                auto* rCond = llvm::BasicBlock::Create(ctx, "copy2d.r.cond", F);
+                auto* rBody = llvm::BasicBlock::Create(ctx, "copy2d.r.body");
+                auto* rInc  = llvm::BasicBlock::Create(ctx, "copy2d.r.inc");
+                // r = 0
+                llvm::AllocaInst* rVar = createEntryAlloca(F, i32, "r");
+                builder->CreateStore(llvm::ConstantInt::get(i32, 0), rVar);
+                builder->CreateBr(rCond);
+
+                F->insert(F->end(), rCond);
+                builder->SetInsertPoint(rCond);
+                llvm::Value* rVal = builder->CreateLoad(i32, rVar, "r.val");
+                llvm::Value* rCmp = builder->CreateICmpSLT(rVal, rows);
+                builder->CreateCondBr(rCmp, rBody, bbEnd);
+
+                // r body: memcpy por linha
+                F->insert(F->end(), rBody);
+                builder->SetInsertPoint(rBody);
+                llvm::Value* rMulDst = builder->CreateMul(rVal, dstStride);
+                llvm::Value* dstLineOff = builder->CreateAdd(dstIdx, rMulDst);
+                llvm::Value* rMulSrc = builder->CreateMul(rVal, srcStride);
+                llvm::Value* srcLineOff = builder->CreateAdd(srcIdx, rMulSrc);
+                llvm::Value* dstLinePtr = gepElem(dstS, dstLineOff, "copy2d.dst.line.ptr");
+                llvm::Value* srcLinePtr = gepElem(srcS, srcLineOff, "copy2d.src.line.ptr");
+                llvm::Value* dstI8L = builder->CreateBitCast(dstLinePtr, i8p);
+                llvm::Value* srcI8L = builder->CreateBitCast(srcLinePtr, i8p);
+                llvm::Value* bytes32L = builder->CreateMul(cols, llvm::ConstantInt::get(i32, 4));
+                llvm::Value* bytes64L = builder->CreateZExt(bytes32L, i64);
+                builder->CreateMemCpy(dstI8L, llvm::MaybeAlign(4), srcI8L, llvm::MaybeAlign(4), bytes64L);
+                builder->CreateBr(rInc);
+
+                F->insert(F->end(), rInc);
+                builder->SetInsertPoint(rInc);
+                llvm::Value* rNext = builder->CreateAdd(rVal, llvm::ConstantInt::get(i32, 1));
+                builder->CreateStore(rNext, rVar);
+                builder->CreateBr(rCond);
+
+                F->insert(F->end(), bbEnd);
+                builder->SetInsertPoint(bbEnd);
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+
+            // r loop
+            auto* rCond = llvm::BasicBlock::Create(ctx, "copy2d.r.cond", F);
+            auto* rBody = llvm::BasicBlock::Create(ctx, "copy2d.r.body");
+            auto* rInc  = llvm::BasicBlock::Create(ctx, "copy2d.r.inc");
+            auto* rEnd  = llvm::BasicBlock::Create(ctx, "copy2d.after");
+
+            // r = 0
+            llvm::AllocaInst* rVar = createEntryAlloca(F, i32, "r");
+            builder->CreateStore(llvm::ConstantInt::get(i32, 0), rVar);
+            builder->CreateBr(rCond);
+
+            F->insert(F->end(), rCond);
+            builder->SetInsertPoint(rCond);
+            llvm::Value* rVal = builder->CreateLoad(i32, rVar, "r.val");
+            llvm::Value* rCmp = builder->CreateICmpSLT(rVal, rows);
+            builder->CreateCondBr(rCmp, rBody, rEnd);
+
+            // r body: memcpy por linha (cols inteiros => bytes = cols*4)
+            F->insert(F->end(), rBody);
+            builder->SetInsertPoint(rBody);
+            // offsets de linha
+            llvm::Value* rMulDst = builder->CreateMul(rVal, dstStride);
+            llvm::Value* dstLineOff = builder->CreateAdd(dstIdx, rMulDst);
+            llvm::Value* rMulSrc = builder->CreateMul(rVal, srcStride);
+            llvm::Value* srcLineOff = builder->CreateAdd(srcIdx, rMulSrc);
+
+            // GEP para primeiro elemento da linha
+            llvm::Value* dstLinePtr = gepElem(dstS, dstLineOff, "copy2d.dst.line.ptr");
+            llvm::Value* srcLinePtr = gepElem(srcS, srcLineOff, "copy2d.src.line.ptr");
+            // Bitcast para ptr genérico (opaque)
+            auto* anyPtr = llvm::PointerType::get(ctx, 0);
+            llvm::Value* dstI8 = builder->CreateBitCast(dstLinePtr, anyPtr);
+            llvm::Value* srcI8 = builder->CreateBitCast(srcLinePtr, anyPtr);
+            // bytes = cols * 4
+            llvm::Value* bytes32 = builder->CreateMul(cols, llvm::ConstantInt::get(i32, 4));
+            auto* i64 = llvm::Type::getInt64Ty(ctx);
+            llvm::Value* bytes64 = builder->CreateZExt(bytes32, i64);
+            auto align4 = llvm::MaybeAlign(4);
+            builder->CreateMemCpy(dstI8, align4, srcI8, align4, bytes64);
+            builder->CreateBr(rInc);
+
+            // r.inc
+            F->insert(F->end(), rInc);
+            builder->SetInsertPoint(rInc);
+            llvm::Value* rNext = builder->CreateAdd(rVal, llvm::ConstantInt::get(i32, 1));
+            builder->CreateStore(rNext, rVar);
+            builder->CreateBr(rCond);
+
+            // end
+            F->insert(F->end(), rEnd);
+            builder->SetInsertPoint(rEnd);
+            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        }
+        if (c->callee == "fill2d") {
+            if (c->args.size() != 6) {
+                diag.error(0,0, "fill2d: aridade invalida (esperado 6)");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            auto* dstRef = dynamic_cast<VarRef*>(c->args[0].get());
+            if (!dstRef) {
+                diag.error(0,0, "fill2d: primeiro argumento deve ser variavel de array");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            VarSlot* dstS = scope.lookup(dstRef->name);
+            if (!dstS) {
+                diag.error(0,0, "fill2d: variavel nao declarada (dst)");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            auto toI32 = [&](Expr* ex)->llvm::Value*{
+                llvm::Value* v = emitExpr(ex, scope);
+                if (!v->getType()->isIntegerTy(32)) v = builder->CreateZExtOrTrunc(v, llvm::Type::getInt32Ty(ctx));
+                return v;
+            };
+            llvm::Value* dstStride = toI32(c->args[1].get());
+            llvm::Value* dstIdx    = toI32(c->args[2].get());
+            llvm::Value* value     = toI32(c->args[3].get());
+            llvm::Value* cols      = toI32(c->args[4].get());
+            llvm::Value* rows      = toI32(c->args[5].get());
+
+            auto gepElem = [&](VarSlot* S, llvm::Value* off, const std::string& nm){
+                if (S->isGlobal && S->isArray) {
+                    auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                    return (llvm::Value*)builder->CreateInBoundsGEP(
+                        llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                        S->ptr, std::array<llvm::Value*,2>{zero, off}, nm);
+                } else {
+                    return (llvm::Value*)builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, nm);
+                }
+            };
+
+            llvm::Function* F = builder->GetInsertBlock()->getParent();
+            auto* i32 = llvm::Type::getInt32Ty(ctx);
+
+            auto* rCond = llvm::BasicBlock::Create(ctx, "fill2d.r.cond", F);
+            auto* rBody = llvm::BasicBlock::Create(ctx, "fill2d.r.body");
+            auto* rInc  = llvm::BasicBlock::Create(ctx, "fill2d.r.inc");
+            auto* rEnd  = llvm::BasicBlock::Create(ctx, "fill2d.after");
+
+            llvm::AllocaInst* rVar = createEntryAlloca(F, i32, "r");
+            builder->CreateStore(llvm::ConstantInt::get(i32, 0), rVar);
+            builder->CreateBr(rCond);
+
+            F->insert(F->end(), rCond);
+            builder->SetInsertPoint(rCond);
+            llvm::Value* rVal = builder->CreateLoad(i32, rVar, "r.val");
+            llvm::Value* rCmp = builder->CreateICmpSLT(rVal, rows);
+            builder->CreateCondBr(rCmp, rBody, rEnd);
+
+            F->insert(F->end(), rBody);
+            builder->SetInsertPoint(rBody);
+            bool canUseMemsetZero = false;
+            if (auto CI = llvm::dyn_cast<llvm::ConstantInt>(value)) { canUseMemsetZero = CI->isZero(); }
+            if (canUseMemsetZero) {
+                // memset por linha
+                llvm::Value* rMul = builder->CreateMul(rVal, dstStride);
+                llvm::Value* dstLineOff = builder->CreateAdd(dstIdx, rMul);
+                llvm::Value* dstLinePtr = gepElem(dstS, dstLineOff, "fill2d.dst.line.ptr");
+                auto* anyPtr = llvm::PointerType::get(ctx, 0);
+                llvm::Value* dstI8 = builder->CreateBitCast(dstLinePtr, anyPtr);
+                llvm::Value* bytes32 = builder->CreateMul(cols, llvm::ConstantInt::get(i32, 4));
+                auto* i64 = llvm::Type::getInt64Ty(ctx);
+                llvm::Value* bytes64 = builder->CreateZExt(bytes32, i64);
+                auto align4 = llvm::MaybeAlign(4);
+                builder->CreateMemSet(dstI8, llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), 0), bytes64, align4);
+                builder->CreateBr(rInc);
+            } else {
+                // fallback: laço por coluna
+                auto* cCond = llvm::BasicBlock::Create(ctx, "fill2d.c.cond", F);
+                auto* cBody = llvm::BasicBlock::Create(ctx, "fill2d.c.body");
+                auto* cInc  = llvm::BasicBlock::Create(ctx, "fill2d.c.inc");
+                llvm::AllocaInst* cVar = createEntryAlloca(F, i32, "c");
+                builder->CreateStore(llvm::ConstantInt::get(i32, 0), cVar);
+                builder->CreateBr(cCond);
+
+                builder->SetInsertPoint(cCond);
+                llvm::Value* cVal = builder->CreateLoad(i32, cVar, "c.val");
+                llvm::Value* cCmp = builder->CreateICmpSLT(cVal, cols);
+                builder->CreateCondBr(cCmp, cBody, rInc);
+
+                F->insert(F->end(), cBody);
+                builder->SetInsertPoint(cBody);
+                llvm::Value* rMul = builder->CreateMul(rVal, dstStride);
+                llvm::Value* off  = builder->CreateAdd(dstIdx, rMul);
+                off               = builder->CreateAdd(off, cVal);
+                llvm::Value* dstPtr = gepElem(dstS, off, "fill2d.dst.ptr");
+                builder->CreateStore(value, dstPtr);
+
+                builder->CreateBr(cInc);
+                F->insert(F->end(), cInc);
+                builder->SetInsertPoint(cInc);
+                llvm::Value* cNext = builder->CreateAdd(cVal, llvm::ConstantInt::get(i32, 1));
+                builder->CreateStore(cNext, cVar);
+                builder->CreateBr(cCond);
+            }
+
+            F->insert(F->end(), rInc);
+            builder->SetInsertPoint(rInc);
+            llvm::Value* rNext = builder->CreateAdd(rVal, llvm::ConstantInt::get(i32, 1));
+            builder->CreateStore(rNext, rVar);
+            builder->CreateBr(rCond);
+
+            F->insert(F->end(), rEnd);
+            builder->SetInsertPoint(rEnd);
+            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        }
+
         // R2-13: slice/transpose são tokens reconhecidos em getSlice1D/Index; aqui retornamos dummy
         if (c->callee == "slice" || c->callee == "transpose") {
             if (c->callee == "slice" && c->args.size() != 4) diag.error(0,0, "slice: use slice(view,start,len,step)");
@@ -1337,69 +1623,206 @@ Codegen::Slice1D Codegen::getSlice1D(Expr* e, Scope& scope) {
 }
 
 void Codegen::emitCopySlice(const Slice1D& dst, const Slice1D& src) {
-    assert(dst.isValid() && src.isValid());
+    emitCopySliceSmart(dst, src);
+}
+
+void Codegen::emitFillSlice(const Slice1D& dst, llvm::Value* v) {
+    emitFillSliceSmart(dst, v);
+}
+
+// R2-14: Smart copy (fast-path memcpy/memset + unrollx4)
+void Codegen::emitCopySliceSmart(const Slice1D& D, const Slice1D& S) {
+    assert(D.isValid() && S.isValid());
     auto* i32 = llvm::Type::getInt32Ty(ctx);
-    if (dst.isContiguous() && src.isContiguous()) {
-        llvm::Value* bytes = builder->CreateMul(dst.lenElems, llvm::ConstantInt::get(i32, (int)dst.elemBytes));
-        auto align = llvm::MaybeAlign(dst.elemBytes);
-        builder->CreateMemCpy(dst.baseI8, align, src.baseI8, align, bytes);
-        return;
-    }
+    auto* i64 = llvm::Type::getInt64Ty(ctx);
+    // runtime contiguity: stride == elemBytes
+    llvm::Value* isContigDst = builder->CreateICmpEQ(D.strideB, llvm::ConstantInt::get(i32, (int)D.elemBytes));
+    llvm::Value* isContigSrc = builder->CreateICmpEQ(S.strideB, llvm::ConstantInt::get(i32, (int)S.elemBytes));
+    llvm::Value* isContig    = builder->CreateAnd(isContigDst, isContigSrc);
+
     llvm::Function* F = builder->GetInsertBlock()->getParent();
-    llvm::BasicBlock* preBB  = builder->GetInsertBlock();
-    llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(ctx, "slice.copy.loop", F);
-    llvm::BasicBlock* endBB  = llvm::BasicBlock::Create(ctx, "slice.copy.end");
-    builder->CreateBr(loopBB);
-    builder->SetInsertPoint(loopBB);
-    llvm::PHINode* iPhi = builder->CreatePHI(i32, 2, "i");
-    iPhi->addIncoming(llvm::ConstantInt::get(i32, 0), preBB);
-    llvm::Value* dstOffB = builder->CreateMul(iPhi, dst.strideB);
-    llvm::Value* srcOffB = builder->CreateMul(iPhi, src.strideB);
-    auto* dstPi8 = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), dst.baseI8, dstOffB);
-    auto* srcPi8 = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), src.baseI8, srcOffB);
-    auto* i32Ty = llvm::Type::getInt32Ty(ctx);
-    auto* dstP  = builder->CreateBitCast(dstPi8, i32Ty->getPointerTo());
-    auto* srcP  = builder->CreateBitCast(srcPi8, i32Ty->getPointerTo());
-    auto* val   = builder->CreateLoad(i32Ty, srcP);
-    builder->CreateStore(val, dstP);
-    llvm::Value* iNext = builder->CreateAdd(iPhi, llvm::ConstantInt::get(i32, 1));
-    llvm::Value* cond  = builder->CreateICmpSLT(iNext, dst.lenElems);
-    builder->CreateCondBr(cond, loopBB, endBB);
-    iPhi->addIncoming(iNext, loopBB);
+    auto* fastBB = llvm::BasicBlock::Create(ctx, "slice.fast", F);
+    auto* slowBB = llvm::BasicBlock::Create(ctx, "slice.slow");
+    auto* endBB  = llvm::BasicBlock::Create(ctx, "slice.end");
+    builder->CreateCondBr(isContig, fastBB, slowBB);
+
+    // FAST
+    builder->SetInsertPoint(fastBB);
+    llvm::Value* len64  = builder->CreateZExt(D.lenElems, i64);
+    llvm::Value* eBytes = llvm::ConstantInt::get(i64, (int)D.elemBytes);
+    llvm::Value* nBytes = builder->CreateMul(len64, eBytes);
+    auto align = llvm::MaybeAlign(D.elemBytes);
+    builder->CreateMemCpy(D.baseI8, align, S.baseI8, align, nBytes);
+    builder->CreateBr(endBB);
+
+    // SLOW: unrollx4 + tail
+    F->insert(F->end(), slowBB);
+    builder->SetInsertPoint(slowBB);
+    auto* idx = builder->CreateAlloca(i32, nullptr, "idx");
+    builder->CreateStore(llvm::ConstantInt::get(i32, 0), idx);
+
+    auto offB = [&](llvm::Value* ii, llvm::Value* stride) {
+        auto* off32 = builder->CreateMul(ii, stride);
+        return builder->CreateZExt(off32, i64);
+    };
+    auto loadElem = [&](llvm::Value* baseI8, llvm::Value* off) {
+        auto* p = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), baseI8, off);
+        auto* p32 = builder->CreateBitCast(p, llvm::PointerType::get(llvm::Type::getInt32Ty(ctx), 0));
+        return builder->CreateLoad(llvm::Type::getInt32Ty(ctx), p32);
+    };
+    auto storeElem = [&](llvm::Value* baseI8, llvm::Value* off, llvm::Value* v) {
+        auto* p = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), baseI8, off);
+        auto* p32 = builder->CreateBitCast(p, llvm::PointerType::get(llvm::Type::getInt32Ty(ctx), 0));
+        builder->CreateStore(v, p32);
+    };
+
+    auto* unrollCond = llvm::BasicBlock::Create(ctx, "slice.copy.unroll.cond", F);
+    auto* unrollBody = llvm::BasicBlock::Create(ctx, "slice.copy.unroll.body");
+    auto* tailCond   = llvm::BasicBlock::Create(ctx, "slice.copy.tail.cond");
+    auto* tailBody   = llvm::BasicBlock::Create(ctx, "slice.copy.tail.body");
+    auto* slowEnd    = llvm::BasicBlock::Create(ctx, "slice.slow.end");
+
+    builder->CreateBr(unrollCond);
+    builder->SetInsertPoint(unrollCond);
+    auto* i0 = builder->CreateLoad(i32, idx);
+    auto* iPlus4 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 4));
+    auto* canUnroll = builder->CreateICmpSLE(iPlus4, D.lenElems);
+    builder->CreateCondBr(canUnroll, unrollBody, tailCond);
+
+    // Unrolled body
+    F->insert(F->end(), unrollBody);
+    builder->SetInsertPoint(unrollBody);
+    auto* j0 = i0;
+    auto* j1 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 1));
+    auto* j2 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 2));
+    auto* j3 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 3));
+    auto* so0 = offB(j0, S.strideB); auto* do0 = offB(j0, D.strideB);
+    auto* so1 = offB(j1, S.strideB); auto* do1 = offB(j1, D.strideB);
+    auto* so2 = offB(j2, S.strideB); auto* do2 = offB(j2, D.strideB);
+    auto* so3 = offB(j3, S.strideB); auto* do3 = offB(j3, D.strideB);
+    auto* v0 = loadElem(S.baseI8, so0);
+    auto* v1 = loadElem(S.baseI8, so1);
+    auto* v2 = loadElem(S.baseI8, so2);
+    auto* v3 = loadElem(S.baseI8, so3);
+    storeElem(D.baseI8, do0, v0);
+    storeElem(D.baseI8, do1, v1);
+    storeElem(D.baseI8, do2, v2);
+    storeElem(D.baseI8, do3, v3);
+    builder->CreateStore(iPlus4, idx);
+    builder->CreateBr(unrollCond);
+
+    // Tail loop
+    F->insert(F->end(), tailCond);
+    builder->SetInsertPoint(tailCond);
+    auto* it = builder->CreateLoad(i32, idx);
+    auto* contTail = builder->CreateICmpSLT(it, D.lenElems);
+    builder->CreateCondBr(contTail, tailBody, slowEnd);
+
+    F->insert(F->end(), tailBody);
+    builder->SetInsertPoint(tailBody);
+    auto* offS = offB(it, S.strideB);
+    auto* offD = offB(it, D.strideB);
+    auto* vv   = loadElem(S.baseI8, offS);
+    storeElem(D.baseI8, offD, vv);
+    auto* itNext = builder->CreateAdd(it, llvm::ConstantInt::get(i32, 1));
+    builder->CreateStore(itNext, idx);
+    builder->CreateBr(tailCond);
+
+    F->insert(F->end(), slowEnd);
+    builder->SetInsertPoint(slowEnd);
+    builder->CreateBr(endBB);
+
     F->insert(F->end(), endBB);
     builder->SetInsertPoint(endBB);
 }
 
-void Codegen::emitFillSlice(const Slice1D& dst, llvm::Value* v) {
-    assert(dst.isValid());
+void Codegen::emitFillSliceSmart(const Slice1D& D, llvm::Value* scalar32) {
+    assert(D.isValid());
     auto* i32 = llvm::Type::getInt32Ty(ctx);
-    if (dst.isContiguous()) {
-        if (!v->getType()->isIntegerTy(32)) v = builder->CreateZExtOrTrunc(v, i32);
-        auto* v8 = builder->CreateTrunc(v, llvm::Type::getInt8Ty(ctx));
-        llvm::Value* bytes = builder->CreateMul(dst.lenElems, llvm::ConstantInt::get(i32, (int)dst.elemBytes));
-        auto align = llvm::MaybeAlign(dst.elemBytes);
-        builder->CreateMemSet(dst.baseI8, v8, bytes, align);
-        return;
-    }
+    auto* i64 = llvm::Type::getInt64Ty(ctx);
+    llvm::Value* isContig = builder->CreateICmpEQ(D.strideB, llvm::ConstantInt::get(i32, (int)D.elemBytes));
     llvm::Function* F = builder->GetInsertBlock()->getParent();
-    llvm::BasicBlock* preBB  = builder->GetInsertBlock();
-    llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(ctx, "slice.fill.loop", F);
-    llvm::BasicBlock* endBB  = llvm::BasicBlock::Create(ctx, "slice.fill.end");
-    builder->CreateBr(loopBB);
-    builder->SetInsertPoint(loopBB);
-    llvm::PHINode* iPhi = builder->CreatePHI(i32, 2, "i");
-    iPhi->addIncoming(llvm::ConstantInt::get(i32, 0), preBB);
-    llvm::Value* offB  = builder->CreateMul(iPhi, dst.strideB);
-    auto* dstPi8 = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), dst.baseI8, offB);
-    auto* i32Ty = llvm::Type::getInt32Ty(ctx);
-    auto* dstP  = builder->CreateBitCast(dstPi8, i32Ty->getPointerTo());
-    llvm::Value* vv = v;
-    if (!vv->getType()->isIntegerTy(32)) vv = builder->CreateZExtOrTrunc(vv, i32Ty);
-    builder->CreateStore(vv, dstP);
-    llvm::Value* iNext = builder->CreateAdd(iPhi, llvm::ConstantInt::get(i32, 1));
-    llvm::Value* cond  = builder->CreateICmpSLT(iNext, dst.lenElems);
-    builder->CreateCondBr(cond, loopBB, endBB);
-    iPhi->addIncoming(iNext, loopBB);
+    auto* fastBB = llvm::BasicBlock::Create(ctx, "slice.fast", F);
+    auto* slowBB = llvm::BasicBlock::Create(ctx, "slice.slow");
+    auto* endBB  = llvm::BasicBlock::Create(ctx, "slice.end");
+    builder->CreateCondBr(isContig, fastBB, slowBB);
+
+    // FAST memset
+    builder->SetInsertPoint(fastBB);
+    if (!scalar32->getType()->isIntegerTy(32)) scalar32 = builder->CreateZExtOrTrunc(scalar32, i32);
+    auto* v8 = builder->CreateTrunc(scalar32, llvm::Type::getInt8Ty(ctx));
+    llvm::Value* len64  = builder->CreateZExt(D.lenElems, i64);
+    llvm::Value* eBytes = llvm::ConstantInt::get(i64, (int)D.elemBytes);
+    llvm::Value* nBytes = builder->CreateMul(len64, eBytes);
+    auto align = llvm::MaybeAlign(D.elemBytes);
+    builder->CreateMemSet(D.baseI8, v8, nBytes, align);
+    builder->CreateBr(endBB);
+
+    // SLOW: unrollx4 + tail
+    F->insert(F->end(), slowBB);
+    builder->SetInsertPoint(slowBB);
+    auto* idx = builder->CreateAlloca(i32, nullptr, "idx");
+    builder->CreateStore(llvm::ConstantInt::get(i32, 0), idx);
+    if (!scalar32->getType()->isIntegerTy(32)) scalar32 = builder->CreateZExtOrTrunc(scalar32, i32);
+
+    auto offB = [&](llvm::Value* ii, llvm::Value* stride) {
+        auto* off32 = builder->CreateMul(ii, stride);
+        return builder->CreateZExt(off32, i64);
+    };
+    auto storeElem = [&](llvm::Value* baseI8, llvm::Value* off, llvm::Value* v) {
+        auto* p = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), baseI8, off);
+        auto* p32 = builder->CreateBitCast(p, llvm::PointerType::get(llvm::Type::getInt32Ty(ctx), 0));
+        builder->CreateStore(v, p32);
+    };
+
+    auto* unrollCond = llvm::BasicBlock::Create(ctx, "slice.fill.unroll.cond", F);
+    auto* unrollBody = llvm::BasicBlock::Create(ctx, "slice.fill.unroll.body");
+    auto* tailCond   = llvm::BasicBlock::Create(ctx, "slice.fill.tail.cond");
+    auto* tailBody   = llvm::BasicBlock::Create(ctx, "slice.fill.tail.body");
+    auto* slowEnd    = llvm::BasicBlock::Create(ctx, "slice.slow.end");
+
+    builder->CreateBr(unrollCond);
+    builder->SetInsertPoint(unrollCond);
+    auto* i0 = builder->CreateLoad(i32, idx);
+    auto* iPlus4 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 4));
+    auto* canUnroll = builder->CreateICmpSLE(iPlus4, D.lenElems);
+    builder->CreateCondBr(canUnroll, unrollBody, tailCond);
+
+    F->insert(F->end(), unrollBody);
+    builder->SetInsertPoint(unrollBody);
+    auto* j0 = i0;
+    auto* j1 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 1));
+    auto* j2 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 2));
+    auto* j3 = builder->CreateAdd(i0, llvm::ConstantInt::get(i32, 3));
+    auto* do0 = offB(j0, D.strideB);
+    auto* do1 = offB(j1, D.strideB);
+    auto* do2 = offB(j2, D.strideB);
+    auto* do3 = offB(j3, D.strideB);
+    storeElem(D.baseI8, do0, scalar32);
+    storeElem(D.baseI8, do1, scalar32);
+    storeElem(D.baseI8, do2, scalar32);
+    storeElem(D.baseI8, do3, scalar32);
+    builder->CreateStore(iPlus4, idx);
+    builder->CreateBr(unrollCond);
+
+    F->insert(F->end(), tailCond);
+    builder->SetInsertPoint(tailCond);
+    auto* it = builder->CreateLoad(i32, idx);
+    auto* contTail = builder->CreateICmpSLT(it, D.lenElems);
+    builder->CreateCondBr(contTail, tailBody, slowEnd);
+
+    F->insert(F->end(), tailBody);
+    builder->SetInsertPoint(tailBody);
+    auto* offD = offB(it, D.strideB);
+    storeElem(D.baseI8, offD, scalar32);
+    auto* itNext = builder->CreateAdd(it, llvm::ConstantInt::get(i32, 1));
+    builder->CreateStore(itNext, idx);
+    builder->CreateBr(tailCond);
+
+    F->insert(F->end(), slowEnd);
+    builder->SetInsertPoint(slowEnd);
+    builder->CreateBr(endBB);
+
     F->insert(F->end(), endBB);
     builder->SetInsertPoint(endBB);
 }

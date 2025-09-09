@@ -80,6 +80,10 @@ MUST_PASS=(
   "$ROOT/tests/28_transpose_col_copy_ok.my"
   "$ROOT/tests/29_slice_step2_ok.my"
   "$ROOT/tests/30_slice_fill_ok.my"
+  "$ROOT/tests/23_copy2d_ok.my"
+  "$ROOT/tests/24_fill2d_ok.my"
+  "$ROOT/tests/25_copy2d_rowwide_ok.my"
+  "$ROOT/tests/26_fill2d_zero_ok.my"
 
 )
 MUST_FAIL=(
@@ -145,6 +149,9 @@ MUST_FAIL=(
   "$ROOT/tests/112_fill_view_bad_rhs.my"
   "$ROOT/tests/113_slice_bad_len.my"
   "$ROOT/tests/114_slice_bad_step.my"
+  "$ROOT/tests/111_copy2d_bad_arity.my"
+  "$ROOT/tests/112_fill2d_bad_arity.my"
+  "$ROOT/tests/113_copy2d_nonvar_dst.my"
 )
 
 pass=0
@@ -464,6 +471,12 @@ fi
 if [[ -x "$ROOT/scripts/run_view_ops_tests.sh" ]]; then
   echo
   "$ROOT/scripts/run_view_ops_tests.sh" || true
+fi
+
+# --- Smart copy/fill runtime paths ---
+if [[ -x "$ROOT/scripts/run_view_smartcopy_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_view_smartcopy_tests.sh" || true
 fi
 
 [[ $fail -eq 0 ]] || exit 1

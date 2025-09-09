@@ -332,6 +332,26 @@ private:
             sig.paramDims[0] = {0}; // view 1D base
             funcs["slice"] = std::move(sig);
         }
+
+        // R2-15: copy2d(dst, dstStride, dstIdx, src, srcStride, srcIdx, cols, rows) -> inteiro
+        {
+            FuncSig sig; sig.ret = Type::inteiro();
+            sig.params = { Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro(),
+                           Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro() };
+            sig.paramDims.resize(8);
+            // dst/src como arrays: marcar dims para p0/p3 para evitar coercões escalares
+            sig.paramDims[0] = {0};
+            sig.paramDims[3] = {0};
+            funcs["copy2d"] = std::move(sig);
+        }
+        // R2-15: fill2d(dst, dstStride, dstIdx, value, cols, rows) -> inteiro
+        {
+            FuncSig sig; sig.ret = Type::inteiro();
+            sig.params = { Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro() };
+            sig.paramDims.resize(6);
+            sig.paramDims[0] = {0}; // dst view base
+            funcs["fill2d"] = std::move(sig);
+        }
     }
 
     void collectFuncs(Program* prog){

@@ -1,0 +1,12 @@
+funcao main(): inteiro {
+  variavel a: inteiro[12];
+  variavel b: inteiro[12];
+  variavel i: inteiro;
+  i = 0;
+  enquanto (i < 12) { b[i] = i + 1; i = i + 1; }
+  copy2d(a, 4, 0, b, 4, 0, 4, 3);
+  variavel s: inteiro; s = 0; i = 0;
+  enquanto (i < 12) { s = s + a[i]; i = i + 1; }
+  retorna s; // 78
+}
+

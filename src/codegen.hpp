@@ -16,7 +16,9 @@ namespace mycc {
 
 class Codegen {
 public:
+    enum class Fast2DMode { Off, Auto, Always };
     Codegen(std::string moduleName, Diag& d, bool enableDebug = false, const std::string& srcPath = "", bool ubsanEnabled = false, bool asanEnabled = false);
+    void setFast2DMode(Fast2DMode m) { fast2DMode = m; }
     // Gera IR para um Programa. Retorna ponteiro para Module pronto.
     std::unique_ptr<llvm::Module> run(Program* prog);
 
@@ -115,6 +117,9 @@ private:
     Slice1D getSlice1D(Expr* e, Scope& scope);
     void emitCopySlice(const Slice1D& dst, const Slice1D& src);
     void emitFillSlice(const Slice1D& dst, llvm::Value* v);
+    // R2-14: fast-path + micro-tiling (unrollx4)
+    void emitCopySliceSmart(const Slice1D& dst, const Slice1D& src);
+    void emitFillSliceSmart(const Slice1D& dst, llvm::Value* scalar32);
 
     // ---- Debug info ----
     void setLoc(const SourceLoc& L);
@@ -143,6 +148,9 @@ private:
 
     // R2-07: dimensões por variável (globais/locais)
     std::unordered_map<std::string, std::vector<int>> arrayDimsByName;
+
+    // R2-17: modo de fast-path 2D
+    Fast2DMode fast2DMode = Fast2DMode::Auto;
 };
 
 } // namespace mycc

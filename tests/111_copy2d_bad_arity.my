@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+  variavel a: inteiro[12];
+  variavel b: inteiro[12];
+  // faltando um argumento (8 esperados)
+  copy2d(a, 4, 0, b, 4, 1, 3);
+  retorna 0;
+}
+
