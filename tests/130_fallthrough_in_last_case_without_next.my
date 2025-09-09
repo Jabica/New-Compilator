@@ -1,9 +1,0 @@
-funcao main(): inteiro {
-  variavel x: inteiro = 2;
-  switch (x) {
-    case 1: { retorna 1; }
-    case 2: { fallthrough; }
-  }
-  retorna 0;
-}
-

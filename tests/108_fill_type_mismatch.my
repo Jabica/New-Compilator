@@ -1,7 +1,0 @@
-funcao main(): inteiro {
-  variavel m: inteiro[2][4];
-  // primeiro argumento nao e view/array 1D
-  fill(1, 0);
-  retorna 0;
-}
-

@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 #include <algorithm>
-#include <unordered_set>
 
 namespace mycc {
 
@@ -85,8 +84,6 @@ struct Scope {
     std::unordered_map<std::string, bool> boolLike;
     // Patch 16: marca constantes (verdadeiro se o símbolo é const neste escopo)
     std::unordered_map<std::string, bool> isConst;
-    // R2-07: dimensões de arrays por símbolo
-    std::unordered_map<std::string, std::vector<int>> dims;
     Scope* parent = nullptr;
 
     explicit Scope(Scope* p=nullptr) : parent(p) {}
@@ -97,7 +94,6 @@ struct Scope {
             // reset flag local ao declarar
             boolLike.erase(name);
             isConst[name] = false;
-            dims.erase(name);
         }
         return inserted;
     }
@@ -108,23 +104,6 @@ struct Scope {
             if (it != s->vars.end()) return &it->second;
         }
         return nullptr;
-    }
-
-    // Dimensões: set/get no escopo local ou no que declarou
-    void setDimsHere(const std::string& name, const std::vector<int>& v){ dims[name] = v; }
-    void setDimsWhereDeclared(const std::string& name, const std::vector<int>& v){
-        for (auto s=this; s; s=s->parent){
-            auto it = s->vars.find(name);
-            if (it != s->vars.end()) { s->dims[name] = v; return; }
-        }
-        dims[name] = v;
-    }
-    std::vector<int> getDims(const std::string& name) const{
-        for (auto s=this; s; s=s->parent){
-            auto it = s->dims.find(name);
-            if (it != s->dims.end()) return it->second;
-        }
-        return {};
     }
 
     // Lê a flag "boolLike" procurando no escopo atual e ancestrais
@@ -178,7 +157,6 @@ struct Scope {
 struct FuncSig {
     Type ret;
     std::vector<Type> params;
-    std::vector<std::vector<int>> paramDims; // R2-08: dims por parâmetro (vazia => escalar)
 };
 
 class SemanticChecker {
@@ -200,13 +178,9 @@ public:
 private:
     Diag& diag;
     int loopDepth = 0;
-    int switchDepth = 0; // R2-03
-    std::vector<int> caseArmsRemaining; // R2-03
-    int insideCase = 0; // R2-03
     std::unordered_map<std::string, FuncSig> funcs;
     std::unordered_map<std::string, Type> globals;
     std::unordered_map<std::string, bool> globalsConst;
-    std::unordered_map<std::string, std::vector<int>> globalsDims; // R2-07
     struct ConstVal { bool isConst=false; Type ty=Type::inteiro(); long long i=0; };
     std::unordered_map<std::string, ConstVal> constScalars; // apenas globais const escalares
     std::unordered_map<std::string, std::vector<long long>> constArrays; // globais const vetores (valores normalizados)
@@ -286,103 +260,15 @@ private:
         funcs["printi"] = FuncSig{ Type::vazio(), { Type::inteiro() } };
         funcs["printb"] = FuncSig{ Type::vazio(), { Type::logico()  } };
         funcs["prints"] = FuncSig{ Type::vazio(), { Type::texto()   } };
-
-        // R2-11: built-ins para operacoes em views contiguos (1D)
-        // copy(dstView1D, srcView1D) -> int (valor de retorno indiferente)
-        {
-            FuncSig sig;
-            sig.ret = Type::inteiro();
-            sig.params = { Type::inteiro(), Type::inteiro() }; // base types; dims indicam arrays
-            sig.paramDims.resize(2);
-            // rank 1, tamanho desconhecido (0 => nao checa comprimento estatico)
-            sig.paramDims[0] = {0};
-            sig.paramDims[1] = {0};
-            funcs["copy"] = std::move(sig);
-        }
-        // fill(dstView1D, valorInt) -> int
-        {
-            FuncSig sig;
-            sig.ret = Type::inteiro();
-            sig.params = { Type::inteiro(), Type::inteiro() };
-            sig.paramDims.resize(2);
-            sig.paramDims[0] = {0}; // view 1D
-            sig.paramDims[1] = {};  // escalar int
-            funcs["fill"] = std::move(sig);
-        }
-
-        // R2-12: helper de coluna para testes: m_col(m: int[R][C], j:int) -> view 1D (array)
-        {
-            FuncSig sig;
-            Type ret = Type::inteiro(); ret.arrayLen = 1; // marca como array para semântica
-            sig.ret = ret;
-            sig.params = { Type::inteiro(), Type::inteiro() };
-            sig.paramDims.resize(2);
-            sig.paramDims[0] = {0,0}; // 2D array (tamanhos desconhecidos)
-            sig.paramDims[1] = {};    // escalar coluna
-            funcs["m_col"] = std::move(sig);
-        }
-
-        // R2-13: slice(view,start,len,step) -> view 1D (array)
-        {
-            FuncSig sig;
-            Type ret = Type::inteiro(); ret.arrayLen = 1;
-            sig.ret = ret;
-            sig.params = { Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro() };
-            sig.paramDims.resize(4);
-            sig.paramDims[0] = {0}; // view 1D base
-            funcs["slice"] = std::move(sig);
-        }
-
-        // R2-15: copy2d(dst, dstStride, dstIdx, src, srcStride, srcIdx, cols, rows) -> inteiro
-        {
-            FuncSig sig; sig.ret = Type::inteiro();
-            sig.params = { Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro(),
-                           Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro() };
-            sig.paramDims.resize(8);
-            // dst/src como arrays: marcar dims para p0/p3 para evitar coercões escalares
-            sig.paramDims[0] = {0};
-            sig.paramDims[3] = {0};
-            funcs["copy2d"] = std::move(sig);
-        }
-        // R2-15: fill2d(dst, dstStride, dstIdx, value, cols, rows) -> inteiro
-        {
-            FuncSig sig; sig.ret = Type::inteiro();
-            sig.params = { Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro() };
-            sig.paramDims.resize(6);
-            sig.paramDims[0] = {0}; // dst view base
-            funcs["fill2d"] = std::move(sig);
-        }
     }
 
     void collectFuncs(Program* prog){
         for (auto& fptr : prog->funcs){
             FuncSig sig; sig.ret = fptr->ret;
             sig.params.reserve(fptr->params.size());
-            sig.paramDims.resize(fptr->params.size());
             for (auto& p : fptr->params) sig.params.push_back(p.type);
 
-            // R2-08: resolve dims dos parâmetros (const-expr > 0)
-            for (size_t i=0;i<fptr->params.size();++i){
-                auto& P = fptr->params[i];
-                if (!P.arrayDimsExpr.empty()){
-                    P.arrayDims.clear();
-                    for (auto& ex : P.arrayDimsExpr){
-                        auto cv = evalConst(ex.get());
-                        if (!cv.isConst || cv.ty.kind != Type::Inteiro){
-                            diag.error(0,0, "tamanho de parametro array deve ser const-expr em '" + fptr->name + "'");
-                            continue;
-                        }
-                        if (cv.i < 1 || cv.i > INT_MAX){
-                            diag.error(0,0, "tamanho de parametro array invalido (>=1) em '" + fptr->name + "'");
-                            continue;
-                        }
-                        P.arrayDims.push_back((int)cv.i);
-                    }
-                }
-                sig.paramDims[i] = P.arrayDims;
-            }
-
-            // Proíbe retorno de array por valor (não suportado)
+            // Proíbe retorno de array por valor
             if (sig.ret.isArray()){
                 diag.error(0,0, "retorno de array por valor nao suportado na funcao '" + fptr->name + "'");
             }
@@ -416,29 +302,8 @@ private:
     void checkGlobals(Program* prog){
         for (auto& gptr : prog->globals) {
             VarDecl* g = gptr.get();
-            // Resolve dimensões (ND) via const-expr, se presentes
-            if (!g->arrayDimsExpr.empty()) {
-                g->arrayDims.clear();
-                long long total = 1;
-                for (auto& ex : g->arrayDimsExpr) {
-                    auto cv = evalConst(ex.get());
-                    if (!cv.isConst || cv.ty.kind != Type::Inteiro) {
-                        diag.error(0,0, "tamanho de vetor deve ser const-expr em '" + g->name + "'");
-                        continue;
-                    }
-                    if (cv.i < 1 || cv.i > INT_MAX) {
-                        diag.error(0,0, "tamanho de vetor invalido (>=1) em '" + g->name + "'");
-                        continue;
-                    }
-                    g->arrayDims.push_back((int)cv.i);
-                    total *= cv.i;
-                }
-                if (!g->arrayDims.empty()) {
-                    g->arrayLen = (int)total;
-                    g->type.arrayLen = g->arrayLen;
-                }
-            } else if (g->arrayLenExpr) {
-                // Legado 1D
+            // Resolve tamanho de vetor via const-expr, se presente
+            if (g->arrayLenExpr) {
                 auto cv = evalConst(g->arrayLenExpr.get());
                 if (!cv.isConst || cv.ty.kind != Type::Inteiro) {
                     diag.error(0,0, "tamanho de vetor deve ser const-expr em '" + g->name + "'");
@@ -449,7 +314,6 @@ private:
                     } else {
                         g->arrayLen = (int)val;
                         g->type.arrayLen = g->arrayLen;
-                        g->arrayDims = { g->arrayLen };
                     }
                 }
             }
@@ -511,7 +375,6 @@ private:
             }
             globals.emplace(g->name, g->type);
             globalsConst.emplace(g->name, g->isConst);
-            if (!g->arrayDims.empty()) globalsDims[g->name] = g->arrayDims;
             // salva valor para dependencias entre const
             if (g->isConst) {
                 if (g->arrayLen == 0) {
@@ -540,28 +403,8 @@ private:
             }
 
             if (auto v = dynamic_cast<VarDecl*>(sptr.get())){
-                // Resolve dimensões locais (ND) via const-expr
-                if (!v->arrayDimsExpr.empty()) {
-                    v->arrayDims.clear();
-                    long long total = 1;
-                    for (auto& ex : v->arrayDimsExpr) {
-                        auto cv = evalConst(ex.get());
-                        if (!cv.isConst || cv.ty.kind != Type::Inteiro) {
-                            diag.error(0,0, "tamanho de vetor deve ser const-expr em '" + v->name + "'");
-                            continue;
-                        }
-                        if (cv.i < 1 || cv.i > INT_MAX) {
-                            diag.error(0,0, "tamanho de vetor invalido (>=1) em '" + v->name + "'");
-                            continue;
-                        }
-                        v->arrayDims.push_back((int)cv.i);
-                        total *= cv.i;
-                    }
-                    if (!v->arrayDims.empty()) {
-                        v->arrayLen = (int)total;
-                        v->type.arrayLen = v->arrayLen;
-                    }
-                } else if (v->arrayLenExpr) {
+                // Resolve tamanho de vetor local via const-expr (usa somente const globais neste patch)
+                if (v->arrayLenExpr) {
                     auto cv = evalConst(v->arrayLenExpr.get());
                     if (!cv.isConst || cv.ty.kind != Type::Inteiro) {
                         diag.error(0,0, "tamanho de vetor deve ser const-expr em '" + v->name + "'");
@@ -572,7 +415,6 @@ private:
                         } else {
                             v->arrayLen = (int)val;
                             v->type.arrayLen = v->arrayLen;
-                            v->arrayDims = { v->arrayLen };
                         }
                     }
                 }
@@ -580,7 +422,6 @@ private:
                     diag.error(0,0, "variavel redeclarada: " + v->name);
                     ok = false;
                 }
-                if (!v->arrayDims.empty()) local.setDimsHere(v->name, v->arrayDims);
                 if (v->init){
                     Type ti = checkExpr(v->init.get(), local);
                     bool okConv = isImplicitlyConvertible(ti, v->type)
@@ -657,55 +498,29 @@ private:
                 }
             }
             else if (auto ai = dynamic_cast<AssignIndex*>(sptr.get())){
-                // Flatten base indices
-                std::vector<Expr*> idxExprs;
-                Expr* cur = ai->base.get();
-                std::string name;
-                while (auto ix = dynamic_cast<Index*>(cur)) { idxExprs.push_back(ix->idx.get()); cur = ix->base.get(); }
-                if (auto vr = dynamic_cast<VarRef*>(cur)) { name = vr->name; }
-                else { diag.error(0,0,"atribuicao indexada invalida"); ok=false; continue; }
-                // append last index from AssignIndex
-                idxExprs.push_back(ai->index.get());
-                for (auto* ex : idxExprs) {
-                    Type ti = checkExpr(ex, local);
-                    if (ti.kind != Type::Inteiro || ti.isArray()) { diag.error(0,0, "indice de array deve ser inteiro"); ok=false; }
+                // Detecta const
+                if (auto vr = dynamic_cast<VarRef*>(ai->base.get())){
+                    if (local.getConst(vr->name)) {
+                        diag.error(0,0, "nao e permitido atribuir a constante: " + vr->name);
+                    }
                 }
-                // const check
-                if (local.getConst(name)) { diag.error(0,0, "nao e permitido atribuir a constante: " + name); ok=false; }
-                // dims check
-                std::vector<int> dims = local.getDims(name);
-                if (dims.empty()) {
-                    const Type* tvar = local.lookup(name); if (!tvar || !tvar->isArray()) { diag.error(0,0, "indexacao em tipo nao-array"); ok=false; }
-                } else if (idxExprs.size() == dims.size()) {
-                    // atribuicao de elemento escalar
-                    Type tval = checkExpr(ai->value.get(), local);
-                    const Type* tvar = local.lookup(name);
-                    if (tvar) {
-                        Type elem = *tvar; elem.arrayLen = 0;
-                        if (!isImplicitlyConvertible(tval, elem)) {
-                            diag.error(0,0, "tipo incompativel na atribuicao ao elemento do array ("+elem.str()+" <- "+tval.str()+")");
-                            ok = false;
-                        }
+                Type tbase = checkExpr(ai->base.get(), local);
+                Type tidx  = checkExpr(ai->index.get(), local); // seu AST usa 'index'
+                if (!tbase.isArray()){
+                    diag.error(0,0, "indexacao em tipo nao-array");
+                    ok = false;
+                }
+                if (tidx.kind != Type::Inteiro || tidx.isArray()){
+                    diag.error(0,0, "indice de array deve ser inteiro");
+                    ok = false;
+                }
+                Type tval = checkExpr(ai->value.get(), local);
+                if (tbase.isArray()){
+                    Type elem = tbase.elem();
+                    if (!isImplicitlyConvertible(tval, elem)){
+                        diag.error(0,0, "tipo incompativel na atribuicao ao elemento do array ("+elem.str()+" <- "+tval.str()+")");
+                        ok = false;
                     }
-                } else if (idxExprs.size() + 1 == dims.size()) {
-                    // R2-12: açúcar de atribuicao para slice 1D
-                    // RHS pode ser outro slice (Index...) ou helper 'm_col', ou escalar (fill)
-                    bool rhsIsSlice = dynamic_cast<Index*>(ai->value.get()) != nullptr;
-                    bool rhsIsCol   = false;
-                    if (auto call = dynamic_cast<Call*>(ai->value.get())) rhsIsCol = (getCallName(*call) == "m_col");
-                    Type tval = checkExpr(ai->value.get(), local);
-                    if (rhsIsSlice || rhsIsCol) {
-                        // opcional: se conseguir, validar comprimento igual (dims.back())
-                        // aqui omitimos para manter simples
-                    } else {
-                        // fill com escalar: esperar inteiro
-                        if (tval.isArray() || tval.kind != Type::Inteiro) {
-                            diag.error(0,0, "atribuicao de slice requer inteiro (fill) ou outro slice 1D");
-                            ok = false;
-                        }
-                    }
-                } else {
-                    diag.error(0,0, "numero de indices diferente das dimensoes do array"); ok=false;
                 }
             }
             else if (auto r = dynamic_cast<ReturnStmt*>(sptr.get())){
@@ -781,20 +596,6 @@ private:
                 loopDepth--;
                 // não assumimos laço infinito
             }
-            else if (auto dw = dynamic_cast<DoWhileStmt*>(sptr.get())){
-                // Semântica: condição deve ser lógica (mesma regra de 'enquanto')
-                loopDepth++;
-                bool retBody=false;
-                ok &= checkBlock(dw->body.get(), local, currentRet, retBody);
-                loopDepth--;
-                {
-                    Type tc = checkExpr(dw->cond.get(), local);
-                    if (tc.isArray() || tc.kind != Type::Logico) {
-                        diag.error(0,0, "condicao de 'do-while' deve ser logico");
-                        ok = false;
-                    }
-                }
-            }
             else if (auto fr = dynamic_cast<ForStmt*>(sptr.get())){
                 // For tem escopo próprio para init
                 Scope forScope(&local);
@@ -846,80 +647,11 @@ private:
                 ok &= checkBlock(fr->body.get(), forScope, currentRet, retBody);
                 loopDepth--;
             }
-            else if (auto sw = dynamic_cast<SwitchStmt*>(sptr.get())){
-                // scrutinee deve ser inteiro (escalares)
-                Type ts = checkExpr(sw->scrutinee.get(), local);
-                if (ts.isArray() || ts.kind != Type::Inteiro) {
-                    diag.error(0,0, "expressao de 'switch' deve ser inteiro");
-                }
-                // cases: sem duplicatas
-                std::unordered_set<int> seen;
-                for (auto& c : sw->cases) {
-                    if (!seen.insert(c.value).second) {
-                        diag.error(0,0, std::string("valor de 'case' duplicado: ") + std::to_string(c.value));
-                    }
-                }
-                // contexto de switch para 'break' e verificação de fallthrough
-                switchDepth++;
-                int totalArms = (int)sw->cases.size() + (sw->deflt ? 1 : 0);
-                int remaining = totalArms;
-
-                for (size_t i=0;i<sw->cases.size();++i) {
-                    --remaining;
-                    insideCase++;
-                    caseArmsRemaining.push_back(remaining);
-                    // 'fallthrough' deve ser última instrução se presente
-                    if (!sw->cases[i].body->stmts.empty()) {
-                        for (size_t k=0;k+1<sw->cases[i].body->stmts.size();++k) {
-                            if (dynamic_cast<FallthroughStmt*>(sw->cases[i].body->stmts[k].get())) {
-                                diag.error(0,0, "'fallthrough' deve ser a ultima instrucao do case");
-                                ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    bool retArm=false;
-                    ok &= checkBlock(sw->cases[i].body.get(), local, currentRet, retArm);
-                    caseArmsRemaining.pop_back();
-                    insideCase--;
-                }
-                if (sw->deflt) {
-                    --remaining;
-                    insideCase++;
-                    caseArmsRemaining.push_back(remaining);
-                    if (!sw->deflt->stmts.empty()) {
-                        for (size_t k=0;k+1<sw->deflt->stmts.size();++k) {
-                            if (dynamic_cast<FallthroughStmt*>(sw->deflt->stmts[k].get())) {
-                                diag.error(0,0, "'fallthrough' deve ser a ultima instrucao do case");
-                                ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    bool retDef=false;
-                    ok &= checkBlock(sw->deflt.get(), local, currentRet, retDef);
-                    caseArmsRemaining.pop_back();
-                    insideCase--;
-                }
-                switchDepth--;
-            }
             else if (dynamic_cast<BreakStmt*>(sptr.get())){
-                if (loopDepth <= 0 && switchDepth <= 0) diag.error(0,0, "'break' fora de laco ou switch");
+                if (loopDepth <= 0) diag.error(0,0, "'break' fora de laco");
             }
             else if (dynamic_cast<ContinueStmt*>(sptr.get())){
                 if (loopDepth <= 0) diag.error(0,0, "'continue' fora de laco");
-            }
-            else if (dynamic_cast<FallthroughStmt*>(sptr.get())){
-                if (insideCase <= 0) {
-                    diag.error(0,0, "'fallthrough' so pode aparecer dentro de um 'case' de 'switch'");
-                    ok = false;
-                } else {
-                    int remain = caseArmsRemaining.empty() ? 0 : caseArmsRemaining.back();
-                    if (remain <= 0) {
-                        diag.error(0,0, "'fallthrough' no ultimo braco do switch");
-                        ok = false;
-                    }
-                }
             }
             else if (auto blk = dynamic_cast<Block*>(sptr.get())){
                 bool retInner=false;
@@ -943,17 +675,11 @@ private:
             top.declare(name, ty);
             auto itC = globalsConst.find(name);
             if (itC != globalsConst.end()) top.setConstWhereDeclared(name, itC->second);
-            auto itD = globalsDims.find(name);
-            if (itD != globalsDims.end()) top.setDimsHere(name, itD->second);
         }
         // declara parâmetros
         for (auto& p : f->params){
             if (!top.declare(p.name, p.type)){
                 diag.error(0,0, "variavel redeclarada: " + p.name);
-            }
-            // R2-08: se parâmetro for array, injete dims no escopo
-            if (!p.arrayDims.empty()) {
-                top.setDimsHere(p.name, p.arrayDims);
             }
             // Não marque parâmetros inteiros automaticamente como booleanos.
             // Uma variável só vira "boolLike" quando for claramente 0/1
@@ -1080,71 +806,6 @@ private:
         for (size_t i=0;i<n;++i){
             Type ta = checkExpr(c->args[i].get(), scope);
             const Type& tp = sig.params[i];
-            // R2-08/R2-09: se o formal for array (tem dims)
-            if (!sig.paramDims.empty() && i < sig.paramDims.size() && !sig.paramDims[i].empty()){
-                const auto& formalDims = sig.paramDims[i];
-                const size_t K = formalDims.size();
-
-                auto checkDimsSuffix = [&](const std::vector<int>& baseDims, size_t kFix){
-                    if (kFix > baseDims.size()) return; // outra checagem já reportará
-                    if (formalDims.size() == baseDims.size() - kFix) {
-                        for (size_t t=0;t<formalDims.size();++t){
-                            if (formalDims[t] > 0 && (size_t)(kFix+t) < baseDims.size() && formalDims[t] != baseDims[kFix+t]){
-                                diag.error(0,0, "dimensoes incompativeis no argumento " + std::to_string(i+1));
-                                break;
-                            }
-                        }
-                    }
-                };
-
-                bool handled = false;
-                // Caso 1: VarRef
-                if (auto vr = dynamic_cast<VarRef*>(c->args[i].get())) {
-                    auto dimsArg = scope.getDims(vr->name);
-                    if (dimsArg.empty()){
-                        diag.error(0,0, "argumento nao eh array no parametro " + std::to_string(i+1));
-                    } else if (dimsArg.size() != K) {
-                        diag.error(0,0, "rank de array incompatível no argumento " + std::to_string(i+1));
-                    } else {
-                        checkDimsSuffix(dimsArg, 0);
-                    }
-                    handled = true;
-                }
-                // Caso 2: Slice (cadeia de Index sobre VarRef)
-                if (!handled) {
-                    std::vector<Expr*> idxExprs2;
-                    Expr* cur2 = c->args[i].get();
-                    while (auto ix = dynamic_cast<Index*>(cur2)) { idxExprs2.push_back(ix->idx.get()); cur2 = ix->base.get(); }
-                    if (auto vr2 = dynamic_cast<VarRef*>(cur2)) {
-                        auto baseDims = scope.getDims(vr2->name);
-                        if (baseDims.empty()) {
-                            diag.error(0,0, "argumento nao eh array no parametro " + std::to_string(i+1));
-                        } else {
-                            size_t R = baseDims.size();
-                            size_t kfix = idxExprs2.size();
-                            if (kfix > R) {
-                                diag.error(0,0, "indices em excesso no argumento " + std::to_string(i+1));
-                            } else {
-                                size_t rankView = R - kfix;
-                                if (rankView != K) {
-                                    diag.error(0,0, "rank de array incompatível no argumento " + std::to_string(i+1));
-                                } else {
-                                    checkDimsSuffix(baseDims, kfix);
-                                }
-                            }
-                        }
-                        handled = true;
-                    }
-                }
-                if (!handled) {
-                    // último recurso: se o tipo já veio como array, aceite somente se K==1 (legado)
-                    if (!(ta.isArray() && K==1)) {
-                        diag.error(0,0, "argumento invalido para parametro array no argumento " + std::to_string(i+1));
-                    }
-                }
-                // Skip scalar conversion checks for arrays
-                continue;
-            }
 
             // Regra para argumentos:
             // - Permite bool -> int (escalares)
@@ -1175,131 +836,22 @@ private:
             }
         }
         if (sig.ret.isArray()){
-            // Exceções: views utilitárias (m_col, slice)
-            if (!(fname == "m_col" || fname == "slice"))
-                diag.error(0,0, "retorno de array por valor nao suportado em '" + fname + "'");
-        }
-        // R2-13: validações slice(view,start,len,step)
-        if (fname == "slice" && c->args.size() == 4) {
-            auto evalConstI = [&](Expr* ex, long long& out)->bool{ auto cv=evalConst(ex); if (!cv.isConst) return false; cv=toInt(cv); out=cv.i; return true; };
-            long long stepV=0, lenV=0; bool stepConst=evalConstI(c->args[3].get(), stepV); bool lenConst=evalConstI(c->args[2].get(), lenV);
-            if (stepConst && stepV <= 0) diag.error(0,0, "slice: step deve ser > 0");
-            if (lenConst && lenV < 0) diag.error(0,0, "slice: len deve ser >= 0");
-            // opcional: bound
-            int baseLen = -1;
-            if (auto vr = dynamic_cast<VarRef*>(c->args[0].get())) {
-                auto D = scope.getDims(vr->name); if (D.size()==1) baseLen = D[0];
-            } else if (auto ix = dynamic_cast<Index*>(c->args[0].get())) {
-                std::vector<Expr*> idxs; Expr* cur = c->args[0].get(); std::string nm;
-                while (auto ix2 = dynamic_cast<Index*>(cur)) { idxs.push_back(ix2->idx.get()); cur = ix2->base.get(); }
-                if (auto vr2 = dynamic_cast<VarRef*>(cur)) nm = vr2->name;
-                auto D = scope.getDims(nm); if (!D.empty() && idxs.size()+1==D.size()) baseLen = D.back();
-            }
-            long long startV=0; (void)evalConstI(c->args[1].get(), startV);
-            if (baseLen > 0 && lenConst && stepConst && lenV > 0 && stepV > 0) {
-                long long last = startV + (lenV-1)*stepV;
-                if (last >= baseLen) diag.error(0,0, "slice: len/step extrapolam o view base");
-            }
-        }
-        // R2-11: checagem leve de copy(view1D, view1D) para comprimentos quando conhecidos
-        if (fname == "copy" && c->args.size() == 2) {
-            auto getLen1D = [&](Expr* ex)->int{
-                // VarRef 1D
-                if (auto vr = dynamic_cast<VarRef*>(ex)) {
-                    auto D = scope.getDims(vr->name);
-                    if (D.size() == 1) return D[0];
-                }
-                // Slice 1D: cadeia de Index cujo rank final é 1
-                std::vector<Expr*> idxExprs2; Expr* cur2 = ex; std::string name2;
-                while (auto ix = dynamic_cast<Index*>(cur2)) { idxExprs2.push_back(ix->idx.get()); cur2 = ix->base.get(); }
-                if (auto vr2 = dynamic_cast<VarRef*>(cur2)) {
-                    name2 = vr2->name;
-                    auto D = scope.getDims(name2);
-                    if (!D.empty() && idxExprs2.size() + 1 == D.size()) {
-                        return D.back();
-                    }
-                }
-                return -1;
-            };
-            int L = getLen1D(c->args[0].get());
-            int R = getLen1D(c->args[1].get());
-            if (L > 0 && R > 0 && L != R) {
-                diag.error(0,0, "copy: comprimentos diferentes entre origem e destino");
-            }
+            diag.error(0,0, "retorno de array por valor nao suportado em '" + fname + "'");
         }
         return sig.ret;
     }
 
-        // indexação a[i][j] ... (ND) com suporte a under-indexing geral (slices contíguos)
-        if (auto ixTop = dynamic_cast<Index*>(e)){
-            // achata cadeia
-            std::vector<Expr*> idxExprs;
-            Expr* cur = e;
-            std::string name;
-            bool isTranspose = false; // R2-13: permite base = transpose(var)
-            while (auto ix = dynamic_cast<Index*>(cur)) {
-                idxExprs.push_back(ix->idx.get());
-                cur = ix->base.get();
+        // indexação a[b]
+        if (auto ix = dynamic_cast<Index*>(e)){
+            Type tb = checkExpr(ix->base.get(), scope);
+            Type ti = checkExpr(ix->idx.get(),  scope); // seu AST usa 'idx'
+            if (!tb.isArray()){
+                diag.error(0,0, "indexacao em tipo nao-array");
             }
-            if (auto vr = dynamic_cast<VarRef*>(cur)) {
-                name = vr->name;
-            } else if (auto call = dynamic_cast<Call*>(cur)) {
-                if (getCallName(*call) == "transpose" && call->args.size() == 1) {
-                    if (auto vr2 = dynamic_cast<VarRef*>(call->args[0].get())) { name = vr2->name; isTranspose = true; }
-                    else { diag.error(0,0, "transpose: argumento deve ser variavel matriz"); return Type::inteiro(); }
-                } else {
-                    diag.error(0,0, "indexacao invalida");
-                    return Type::inteiro();
-                }
-            } else {
-                diag.error(0,0, "indexacao invalida");
-                return Type::inteiro();
+            if (ti.kind != Type::Inteiro || ti.isArray()){
+                diag.error(0,0, "indice de array deve ser inteiro");
             }
-            std::reverse(idxExprs.begin(), idxExprs.end());
-            // checa tipos dos índices
-            for (auto* ex : idxExprs) {
-                Type ti = checkExpr(ex, scope);
-                if (ti.kind != Type::Inteiro || ti.isArray()) {
-                    diag.error(0,0, "indice de array deve ser inteiro");
-                }
-            }
-            // checa dimensões e determina rank resultante
-            std::vector<int> dims = scope.getDims(name);
-            if (isTranspose) {
-                if (dims.size() == 2) std::swap(dims[0], dims[1]);
-                else if (!dims.empty()) {
-                    // fora deste patch: só garantimos 2D; mantenha simples
-                }
-            }
-            size_t rank = dims.size();
-            if (rank == 0) {
-                const Type* tv = scope.lookup(name);
-                if (!tv || !tv->isArray()) {
-                    diag.error(0,0, "indexacao em tipo nao-array");
-                    return Type::inteiro();
-                }
-                // Sem dims registradas: trate como 1D legado; exige exatamente um índice
-                if (idxExprs.size() != 1) diag.error(0,0, "numero de indices diferente das dimensoes do array");
-                Type base = *tv; base.arrayLen = 0; return base;
-            }
-            if (idxExprs.size() > rank) {
-                diag.error(0,0, "indices em excesso para este array");
-                return Type::inteiro();
-            }
-            if (idxExprs.size() == rank) {
-                // elemento escalar
-                const Type* tv = scope.lookup(name);
-                Type base = tv ? *tv : Type::inteiro();
-                base.arrayLen = 0;
-                return base;
-            }
-            // idxExprs.size() < rank: under-indexing -> view ND contíguo
-            // Representamos como array 1D com tamanho igual ao produto das dimensões remanescentes
-            long long prod = 1;
-            for (size_t d = idxExprs.size(); d < rank; ++d) prod *= dims[d];
-            Type res = Type::inteiro();
-            res.arrayLen = (int)prod;
-            return res;
+            return tb.isArray() ? tb.elem() : Type::inteiro();
         }
 
         // fallback

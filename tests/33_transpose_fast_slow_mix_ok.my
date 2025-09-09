@@ -1,7 +1,0 @@
-funcao main(): inteiro {
-  variavel m: inteiro[3][4];
-  m[0][3]=5; m[1][3]=6; m[2][3]=7;
-  copy(slice(m[0],0,3,1), slice(transpose(m)[3],0,3,1));
-  retorna m[0][0] + m[0][1] + m[0][2]; // 18
-}
-

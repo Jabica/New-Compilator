@@ -1,9 +1,0 @@
-funcao main(): inteiro {
-  variavel a: inteiro[12];
-  // Preenche bloco 2x2 com 7 a partir de a[5] em matriz 3x4 (stride=4)
-  fill2d(a, 4, 5, 7, 2, 2);
-  variavel s: inteiro;
-  s = a[5] + a[6] + a[9] + a[10];
-  retorna s; // 28
-}
-

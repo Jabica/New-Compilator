@@ -1,6 +1,0 @@
-funcao main(): inteiro {
-  variavel m: inteiro[2][6];
-  fill(slice(m[1], 0, 3, 2), 9);
-  retorna m[1][0] + m[1][2] + m[1][4]; // 27
-}
-

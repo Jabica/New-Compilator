@@ -1,6 +1,0 @@
-funcao f(a: inteiro[3]): inteiro { retorna a[0]; }
-funcao main(): inteiro {
-  variavel x: inteiro = 10;
-  retorna f(x);
-}
-

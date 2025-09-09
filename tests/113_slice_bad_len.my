@@ -1,7 +1,0 @@
-funcao main(): inteiro {
-  variavel m: inteiro[1][4];
-  // len=5 excede tamanho 4 (se bounds forem checados); aceitaremos como fail genérico
-  copy(m[0], slice(m[0], 0, 5, 1));
-  retorna 0;
-}
-

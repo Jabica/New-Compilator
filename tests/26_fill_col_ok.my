@@ -1,9 +1,0 @@
-funcao main(): inteiro {
-  variavel m: inteiro[3][4];
-  // preenche coluna 0 com 7 via helper m_col
-  fill(m_col(m,0), 7);
-  variavel s: inteiro;
-  s = m[0][0] + m[1][0] + m[2][0];
-  retorna s; // 21
-}
-

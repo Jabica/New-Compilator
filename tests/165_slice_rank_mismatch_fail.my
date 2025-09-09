@@ -1,6 +1,0 @@
-funcao f(v: inteiro[4]): inteiro { retorna v[0]; }
-funcao main(): inteiro {
-  variavel m: inteiro[2][3];
-  retorna f(m[0]); // rank/len mismatch se checar comprimento; mantemos como mismatch genérico
-}
-

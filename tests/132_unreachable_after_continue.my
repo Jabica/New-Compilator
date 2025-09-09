@@ -1,9 +1,0 @@
-funcao main(): inteiro {
-  variavel i: inteiro = 0;
-  enquanto (i < 1) {
-    continue;
-    i = 10; // inalcançavel
-  }
-  retorna 0;
-}
-

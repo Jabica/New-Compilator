@@ -47,43 +47,6 @@ MUST_PASS=(
   "$ROOT/tests/43_prints_many_ok.my"
   "$ROOT/tests/23_for_basic.my"
   "$ROOT/tests/24_break_continue.my"
-  "$ROOT/tests/23_do_while_simple.my"
-  "$ROOT/tests/24_do_while_runs_once.my"
-  "$ROOT/tests/25_do_while_nested.my"
-  "$ROOT/tests/44_switch_simple.my"
-  "$ROOT/tests/45_switch_default.my"
-  "$ROOT/tests/46_switch_multi_cases.my"
-  "$ROOT/tests/47_switch_nested.my"
-  "$ROOT/tests/48_break_in_while.my"
-  "$ROOT/tests/49_break_in_switch.my"
-  "$ROOT/tests/50_fallthrough_to_next_case.my"
-  "$ROOT/tests/51_fallthrough_into_default.my"
-  "$ROOT/tests/52_nested_breaks.my"
-  "$ROOT/tests/53_continue_simple.my"
-  "$ROOT/tests/54_continue_first_stmt.my"
-  "$ROOT/tests/55_continue_nested_with_break.my"
-  "$ROOT/tests/56_for_sum_skip_even_para.my"
-  "$ROOT/tests/57_for_no_init_inc_ok_para.my"
-  "$ROOT/tests/58_for_break_and_continue_para.my"
-  "$ROOT/tests/140_param_array_1d_sum_ok.my"
-  "$ROOT/tests/141_param_array_2d_sum_ok.my"
-  "$ROOT/tests/142_param_array_nested_calls_ok.my"
-  "$ROOT/tests/160_slice_1d_param_ok.my"
-  "$ROOT/tests/161_slice_chain_ok.my"
-  "$ROOT/tests/162_slice_index_ok.my"
-  "$ROOT/tests/166_slice_3d_2d_ok.my"
-  "$ROOT/tests/167_slice_3d_to_1d_ok.my"
-  "$ROOT/tests/168_slice_chain_scalar_ok.my"
-  "$ROOT/tests/25_copy_col_ok.my"
-  "$ROOT/tests/26_fill_col_ok.my"
-  "$ROOT/tests/27_slice_assign_sugar_row_ok.my"
-  "$ROOT/tests/28_transpose_col_copy_ok.my"
-  "$ROOT/tests/29_slice_step2_ok.my"
-  "$ROOT/tests/30_slice_fill_ok.my"
-  "$ROOT/tests/23_copy2d_ok.my"
-  "$ROOT/tests/24_fill2d_ok.my"
-  "$ROOT/tests/25_copy2d_rowwide_ok.my"
-  "$ROOT/tests/26_fill2d_zero_ok.my"
 
 )
 MUST_FAIL=(
@@ -126,32 +89,6 @@ MUST_FAIL=(
   "$ROOT/tests/107_break_outside_loop.my"
   "$ROOT/tests/108_continue_outside_loop.my"
   "$ROOT/tests/109_for_cond_not_bool.my"
-  "$ROOT/tests/107_do_while_cond_not_bool.my"
-  "$ROOT/tests/124_switch_duplicate_case.my"
-  "$ROOT/tests/125_switch_non_int_cond.my"
-  "$ROOT/tests/126_switch_non_int_case.my"
-  "$ROOT/tests/127_break_outside_loop_or_switch.my"
-  "$ROOT/tests/128_fallthrough_outside_switch.my"
-  "$ROOT/tests/129_fallthrough_not_last_stmt.my"
-  "$ROOT/tests/130_fallthrough_in_last_case_without_next.my"
-  "$ROOT/tests/131_continue_outside_while.my"
-  "$ROOT/tests/133_for_cond_not_bool_para.my"
-  "$ROOT/tests/150_param_array_arg_scalar_fail.my"
-  "$ROOT/tests/151_param_array_rank_mismatch_fail.my"
-  "$ROOT/tests/152_return_array_disallowed.my"
-  "$ROOT/tests/163_slice_as_scalar_op_fail.my"
-  "$ROOT/tests/164_slice_assign_fail.my"
-  "$ROOT/tests/165_slice_rank_mismatch_fail.my"
-  "$ROOT/tests/169_slice_nd_as_scalar_op_fail.my"
-  "$ROOT/tests/170_slice_rank_mismatch_fail.my"
-  "$ROOT/tests/171_slice_assign_nd_fail.my"
-  "$ROOT/tests/111_copy_shape_mismatch.my"
-  "$ROOT/tests/112_fill_view_bad_rhs.my"
-  "$ROOT/tests/113_slice_bad_len.my"
-  "$ROOT/tests/114_slice_bad_step.my"
-  "$ROOT/tests/111_copy2d_bad_arity.my"
-  "$ROOT/tests/112_fill2d_bad_arity.my"
-  "$ROOT/tests/113_copy2d_nonvar_dst.my"
 )
 
 pass=0
@@ -465,18 +402,6 @@ fi
 if [[ -x "$ROOT/scripts/run_sanitizer_tests.sh" ]]; then
   echo
   "$ROOT/scripts/run_sanitizer_tests.sh" || true
-fi
-
-# --- Slices contíguos (copy/fill) ---
-if [[ -x "$ROOT/scripts/run_view_ops_tests.sh" ]]; then
-  echo
-  "$ROOT/scripts/run_view_ops_tests.sh" || true
-fi
-
-# --- Smart copy/fill runtime paths ---
-if [[ -x "$ROOT/scripts/run_view_smartcopy_tests.sh" ]]; then
-  echo
-  "$ROOT/scripts/run_view_smartcopy_tests.sh" || true
 fi
 
 [[ $fail -eq 0 ]] || exit 1

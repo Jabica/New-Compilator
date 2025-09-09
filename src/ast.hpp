@@ -145,10 +145,8 @@ struct Index : Expr {
 struct VarDecl : Stmt {
     std::string name;
     Type type;
-    int arrayLen = 0;                 // 0 = escalar; >0 = tamanho total (para ND, produto das dimensões)
-    std::unique_ptr<Expr> arrayLenExpr; // Patch 18: expr de tamanho (const-expr, legado 1D)
-    std::vector<int> arrayDims;                 // R2-07: dimensões (vazia => escalar)
-    std::vector<std::unique_ptr<Expr>> arrayDimsExpr; // R2-07: exprs das dimensões (const-expr)
+    int arrayLen = 0;                 // <-- NOVO: 0 = escalar; >0 = tamanho do vetor
+    std::unique_ptr<Expr> arrayLenExpr; // Patch 18: expr de tamanho (const-expr)
     std::unique_ptr<Expr> init;       // opcional
     bool isConst = false;             // Patch 16: apenas globais neste patch
     std::vector<std::unique_ptr<Expr>> initList; // Patch 16: lista para vetores globais
@@ -162,11 +160,7 @@ struct VarDecl : Stmt {
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d);
         os<<"VarDecl "<<name<<": "<<type.str();
-        if (!arrayDims.empty()) {
-            os<<"[";
-            for (size_t i=0;i<arrayDims.size();++i){ os<<arrayDims[i]; if (i+1<arrayDims.size()) os<<","; }
-            os<<"]";
-        } else if (arrayLen > 0) os<<"["<<arrayLen<<"]";
+        if (arrayLen > 0) os<<"["<<arrayLen<<"]";
         if (isConst) os<<" const";
         os<<"\n";
         if (init){ indent(os,d+1); os<<"init:\n"; init->dump(os,d+2); }
@@ -260,31 +254,12 @@ struct WhileStmt : Stmt {
     }
 };
 
-// R2-01: do { ... } while (cond)
-struct DoWhileStmt : Stmt {
-    std::unique_ptr<Block> body;
-    std::unique_ptr<Expr>  cond;
-    DoWhileStmt() = default;
-    DoWhileStmt(std::unique_ptr<Block> b, std::unique_ptr<Expr> c, SourceLoc L = {})
-        : body(std::move(b)), cond(std::move(c)) { loc = std::move(L); }
-    void dump(std::ostream& os, int d=0) const override {
-        indent(os,d); os << "DoWhile\n";
-        if (body){ indent(os,d+1); os << "body:\n"; body->dump(os,d+2); }
-        if (cond){ indent(os,d+1); os << "cond:\n"; cond->dump(os,d+2); }
-    }
-};
-
 // Patch 20: novos nós de controle de fluxo
 struct BreakStmt : Stmt {
     void dump(std::ostream& os, int d=0) const override { indent(os,d); os << "Break\n"; }
 };
 struct ContinueStmt : Stmt {
     void dump(std::ostream& os, int d=0) const override { indent(os,d); os << "Continue\n"; }
-};
-
-// R2-03: fallthrough;
-struct FallthroughStmt : Stmt {
-    void dump(std::ostream& os, int d=0) const override { indent(os,d); os << "Fallthrough\n"; }
 };
 
 struct ForStmt : Stmt {
@@ -305,39 +280,8 @@ struct ForStmt : Stmt {
     }
 };
 
-// R2-02: switch/case/default (sem fallthrough)
-struct CaseArm {
-    int value;
-    std::unique_ptr<Block> body;
-    CaseArm(int v, std::unique_ptr<Block> b) : value(v), body(std::move(b)) {}
-};
-
-struct SwitchStmt : Stmt {
-    std::unique_ptr<Expr>  scrutinee;
-    std::vector<CaseArm>   cases;
-    std::unique_ptr<Block> deflt; // opcional
-    explicit SwitchStmt(std::unique_ptr<Expr> e) : scrutinee(std::move(e)) {}
-    void dump(std::ostream& os, int d=0) const override {
-        indent(os,d); os << "Switch\n";
-        if (scrutinee) {
-            indent(os,d+1); os << "scrutinee:\n"; scrutinee->dump(os, d+2);
-        }
-        for (auto const& c : cases) {
-            indent(os,d+1); os << "case " << c.value << ":\n";
-            if (c.body) c.body->dump(os, d+2);
-        }
-        if (deflt) { indent(os,d+1); os << "default:\n"; deflt->dump(os, d+2); }
-    }
-};
-
 // ===== FUNÇÕES / PROGRAMA =====
-struct Param {
-    std::string name;
-    Type type;
-    std::vector<int> arrayDims;                       // R2-08: dims resolvidas
-    std::vector<std::unique_ptr<Expr>> arrayDimsExpr; // R2-08: exprs das dims (const-expr)
-    bool isArray() const { return !arrayDims.empty(); }
-};
+struct Param { std::string name; Type type; };
 
 struct FuncDecl : Node {
     std::string name;

@@ -1,7 +1,0 @@
-funcao id(v: inteiro[4]): inteiro { retorna v[2]; }
-funcao main(): inteiro {
-  variavel a: inteiro[2][4];
-  a[1][2] = 7;
-  retorna id(a[1]);
-}
-

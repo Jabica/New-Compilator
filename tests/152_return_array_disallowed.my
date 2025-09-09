@@ -1,5 +1,0 @@
-funcao make(): inteiro[3] {
-  retorna 0;
-}
-funcao main(): inteiro { retorna 0; }
-

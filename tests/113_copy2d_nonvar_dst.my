@@ -1,7 +1,0 @@
-funcao main(): inteiro {
-  variavel a: inteiro[12];
-  variavel b: inteiro[12];
-  copy2d(1, 4, 0, b, 4, 0, 1, 1);
-  retorna 0;
-}
-

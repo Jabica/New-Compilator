@@ -1,5 +1,0 @@
-funcao main(): inteiro {
-  fallthrough;
-  retorna 0;
-}
-

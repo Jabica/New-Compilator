@@ -60,18 +60,17 @@ std::unique_ptr<VarDecl> Parser::parseGlobalDecl(){
 
     Token nameTok = expect(TokenKind::Identifier, "identificador");
 
-    // opcional: [expr] [expr] ... (ND)
-    std::vector<std::unique_ptr<Expr>> arrExprs;
-    while (match(TokenKind::LBracket)) {
-        auto ex = parseExpr();
+    // opcional: [expr]
+    std::unique_ptr<Expr> arrExpr;
+    if (match(TokenKind::LBracket)) {
+        arrExpr = parseExpr();
         expect(TokenKind::RBracket, "]");
-        arrExprs.push_back(std::move(ex));
     }
     ty.arrayLen = 0;
 
     std::unique_ptr<Expr> init;
     std::vector<std::unique_ptr<Expr>> initList;
-    bool isArrayDecl = (!arrExprs.empty());
+    bool isArrayDecl = (arrExpr != nullptr);
     if (isArrayDecl) {
         if (match(TokenKind::Assign)) {
             // lista: { expr (, expr)* }
@@ -94,7 +93,7 @@ std::unique_ptr<VarDecl> Parser::parseGlobalDecl(){
     auto v = std::make_unique<VarDecl>(nameTok.lexeme, ty, ty.arrayLen, std::move(init), LFrom(nameTok, filename));
     v->isConst = isConst;
     v->initList = std::move(initList);
-    v->arrayDimsExpr = std::move(arrExprs);
+    v->arrayLenExpr = std::move(arrExpr);
     return v;
 }
 
@@ -126,13 +125,6 @@ std::unique_ptr<FuncDecl> Parser::parseFuncDecl(){
 
     expect(TokenKind::Colon, ":");
     fn->ret = parseType();
-    // Proibir retorno de array por valor (ND) no tipo de retorno
-    {
-        auto retDims = takePendingArrayLenList();
-        if (!retDims.empty()) {
-            diag.error(nameTok.line, nameTok.col, std::string("retorno de array por valor nao suportado em '") + fn->name + "'");
-        }
-    }
     fn->body = parseBlock();
     return fn;
 }
@@ -145,9 +137,7 @@ std::vector<Param> Parser::parseParamsOpt(){
         auto nameTok = expect(TokenKind::Identifier, "nome do parametro");
         expect(TokenKind::Colon, ":");
         Param p; p.name = nameTok.lexeme; p.type = parseType();
-        // R2-08: coletar dims ND do param (se houver)
-        p.arrayDimsExpr = takePendingArrayLenList();
-        ps.push_back(std::move(p));
+        ps.push_back(p);
         if (!match(TokenKind::Comma)) break;
     }
     return ps;
@@ -164,10 +154,9 @@ Type Parser::parseType(){
         return Type::inteiro();
     }
 
-    // zera e consome sufixos [expr] [expr] ... (ND)
+    // zera e consome sufixos [INT] [INT] ...
     pendingArrayLen = 0;
     pendingArrayLenExpr.reset();
-    pendingArrayLenList.clear();
     while (peek().kind == TokenKind::LBracket) {
         pos++; // '['
         if (peek().kind == TokenKind::KwVerdadeiro || peek().kind == TokenKind::KwFalso) {
@@ -175,7 +164,7 @@ Type Parser::parseType(){
         }
         auto e = parseExpr();
         expect(TokenKind::RBracket, "]");
-        pendingArrayLenList.push_back(std::move(e));
+        pendingArrayLenExpr = std::move(e); // 1D: sobrescreve se repetido
     }
 
     // Não aplica em Type aqui; a semântica resolverá e preencherá VarDecl::arrayLen e type.arrayLen
@@ -214,7 +203,7 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
         }
         expect(TokenKind::Semicolon, ";");
         auto v = std::make_unique<VarDecl>(nameTok.lexeme, ty, ty.arrayLen, std::move(init), LFrom(nameTok, filename));
-        v->arrayDimsExpr = takePendingArrayLenList();
+        v->arrayLenExpr = takePendingArrayLenExpr();
         return v;
     }
 
@@ -233,20 +222,6 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
     // bloco aninhado
     if (peek().kind == TokenKind::LBrace){
         return parseBlock();
-    }
-
-    // do { ... } while (cond);
-    if (peek().kind == TokenKind::KwDo) {
-        Token doTok = expect(TokenKind::KwDo, "do");
-        auto body = parseBlock(); // parseBlock consome '{' e '}'
-        expect(TokenKind::KwWhile, "while");
-        expect(TokenKind::LParen, "(");
-        auto cond = parseExpr();
-        expect(TokenKind::RParen, ")");
-        expect(TokenKind::Semicolon, ";");
-        auto node = std::make_unique<DoWhileStmt>(std::move(body), std::move(cond));
-        node->loc = LFrom(doTok, filename);
-        return node;
     }
 
     // for
@@ -270,14 +245,6 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
         c->loc = LFrom(peek(), filename);
         return c;
     }
-    // fallthrough
-    if (peek().kind == TokenKind::KwFallthrough) {
-        pos++;
-        auto t = expect(TokenKind::Semicolon, ";"); (void)t;
-        auto f = std::make_unique<FallthroughStmt>();
-        f->loc = LFrom(peek(), filename);
-        return f;
-    }
 
     // atribuicao (IDENT '=' ...)
     if (peek().kind == TokenKind::Identifier && peek(1).kind == TokenKind::Assign) {
@@ -288,7 +255,6 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
     // cobre: chamadas, exprs puras e atribuicoes como v[i] = x
     if (peek().kind != TokenKind::KwSe &&
         peek().kind != TokenKind::KwEnquanto &&
-        peek().kind != TokenKind::KwSwitch &&
         peek().kind != TokenKind::LBrace) {
 
         auto lhs = parseExpr();
@@ -366,38 +332,6 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
     }
     if (peek().kind == TokenKind::KwEnquanto){
         return parseWhile();
-    }
-
-    // switch (expr) { case N: { bloco } ... [default: { bloco }] }
-    if (peek().kind == TokenKind::KwSwitch) {
-        Token swTok = expect(TokenKind::KwSwitch, "switch");
-        expect(TokenKind::LParen, "(");
-        auto scr = parseExpr();
-        expect(TokenKind::RParen, ")");
-        expect(TokenKind::LBrace, "{");
-
-        auto sw = std::make_unique<SwitchStmt>(std::move(scr));
-        sw->loc = LFrom(swTok, filename);
-
-        // zero ou mais cases
-        while (peek().kind != TokenKind::RBrace && peek().kind != TokenKind::KwDefault && !atEnd()) {
-            expect(TokenKind::KwCase, "case");
-            // exige literal inteiro por enquanto
-            Token valTok = expect(TokenKind::IntLiteral, "literal inteiro");
-            int lit = std::atoi(valTok.lexeme.c_str());
-            expect(TokenKind::Colon, ":");
-            auto body = parseBlock();
-            sw->cases.emplace_back(lit, std::move(body));
-        }
-
-        // default opcional
-        if (match(TokenKind::KwDefault)) {
-            expect(TokenKind::Colon, ":");
-            sw->deflt = parseBlock();
-        }
-
-        expect(TokenKind::RBrace, "}");
-        return sw;
     }
 
     // fallback mínimo

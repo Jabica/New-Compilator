@@ -16,9 +16,7 @@ namespace mycc {
 
 class Codegen {
 public:
-    enum class Fast2DMode { Off, Auto, Always };
     Codegen(std::string moduleName, Diag& d, bool enableDebug = false, const std::string& srcPath = "", bool ubsanEnabled = false, bool asanEnabled = false);
-    void setFast2DMode(Fast2DMode m) { fast2DMode = m; }
     // Gera IR para um Programa. Retorna ponteiro para Module pronto.
     std::unique_ptr<llvm::Module> run(Program* prog);
 
@@ -78,48 +76,13 @@ private:
     void emitStmt    (Stmt* s, Scope& scope);
     void emitIf      (IfStmt* s, Scope& scope);
     void emitWhile   (WhileStmt* s, Scope& scope);
-    void emitDoWhile (DoWhileStmt* s, Scope& scope);
     void emitFor     (ForStmt* s, Scope& scope);
-    void emitSwitch  (SwitchStmt* s, Scope& scope);
 
     // ---- Expressões ----
     llvm::Value* emitExpr  (Expr* e, Scope& scope);
     llvm::Value* emitUnary (Unary* u, Scope& scope);
     llvm::Value* emitBinary(Binary* b, Scope& scope);
     llvm::Value* emitStringLiteral(const std::string& s);
-    // R2-07: helpers para ND
-    std::pair<std::string, std::vector<llvm::Value*>> flattenIndexChain(Expr* e, Scope& scope);
-    llvm::Value* linearizeOffset(const std::vector<int>& dims,
-                                 const std::vector<llvm::Value*>& idxs);
-
-    // R2-11: info de view contiguo 1D
-    struct ViewInfo {
-        llvm::Value* basePtrI8 = nullptr; // i8*
-        llvm::Value* lenBytes  = nullptr; // i32
-        unsigned elemBytes     = 4;       // inteiro = 4
-    };
-    ViewInfo getContiguous1DView(Expr* e, Scope& scope);
-
-    // R2-12: slices 1D com stride (linhas/colunas)
-    struct Slice1D {
-        llvm::Value* baseI8   = nullptr; // i8* do primeiro elemento
-        llvm::Value* lenElems = nullptr; // i32 numero de elementos
-        llvm::Value* strideB  = nullptr; // i32 stride em bytes
-        unsigned elemBytes    = 4;
-        bool isValid() const { return baseI8 && lenElems && strideB; }
-        bool isContiguous() const {
-            if (!isValid()) return false;
-            if (auto C = llvm::dyn_cast<llvm::ConstantInt>(strideB))
-                return C->getSExtValue() == (long long)elemBytes;
-            return false; // conservador
-        }
-    };
-    Slice1D getSlice1D(Expr* e, Scope& scope);
-    void emitCopySlice(const Slice1D& dst, const Slice1D& src);
-    void emitFillSlice(const Slice1D& dst, llvm::Value* v);
-    // R2-14: fast-path + micro-tiling (unrollx4)
-    void emitCopySliceSmart(const Slice1D& dst, const Slice1D& src);
-    void emitFillSliceSmart(const Slice1D& dst, llvm::Value* scalar32);
 
     // ---- Debug info ----
     void setLoc(const SourceLoc& L);
@@ -139,18 +102,6 @@ private:
     // Patch 20: controle de laços para break/continue
     struct LoopCtx { llvm::BasicBlock* condBB; llvm::BasicBlock* stepBB; llvm::BasicBlock* endBB; };
     std::vector<LoopCtx> loopStack;
-
-    // R2-03: destinos de break/fallthrough
-    std::vector<llvm::BasicBlock*> breakTargets;      // topo: destino de 'break'
-    std::vector<llvm::BasicBlock*> fallthroughTargets; // topo: proximo case/default
-    // R2-04: destino de 'continue'
-    std::vector<llvm::BasicBlock*> continueTargets;    // topo: volta para cond
-
-    // R2-07: dimensões por variável (globais/locais)
-    std::unordered_map<std::string, std::vector<int>> arrayDimsByName;
-
-    // R2-17: modo de fast-path 2D
-    Fast2DMode fast2DMode = Fast2DMode::Auto;
 };
 
 } // namespace mycc

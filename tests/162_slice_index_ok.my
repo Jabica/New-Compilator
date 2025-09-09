@@ -1,6 +1,0 @@
-funcao main(): inteiro {
-  variavel m: inteiro[2][3];
-  m[1][2] = 9;
-  retorna m[1][2];
-}
-

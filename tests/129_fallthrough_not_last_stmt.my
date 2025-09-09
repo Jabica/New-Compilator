@@ -1,8 +1,0 @@
-funcao main(): inteiro {
-  variavel x: inteiro = 1;
-  switch (x) {
-    case 1: { fallthrough; retorna 0; }
-    default: { retorna 1; }
-  }
-}
-
