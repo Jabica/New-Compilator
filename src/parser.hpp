@@ -9,7 +9,8 @@ namespace mycc {
 
 class Parser {
 public:
-    Parser(const std::vector<Token>& t, Diag& d): toks(t), diag(d) {}
+    Parser(const std::vector<Token>& t, Diag& d, std::string filename="")
+        : toks(t), diag(d), filename(std::move(filename)) {}
     std::unique_ptr<Program> parse();
 
     // (Opcional) acessores para o tamanho de array lido por último em parseType()
@@ -22,6 +23,7 @@ private:
     const std::vector<Token>& toks;
     Diag& diag;
     size_t pos = 0;
+    std::string filename;
 
     // Guarda o último tamanho de array lido em parseType() (0 = escalar)
     int pendingArrayLen = 0; // <- NOVO
@@ -36,6 +38,7 @@ private:
 
     // Regras (declarações/estatements)
     std::unique_ptr<FuncDecl> parseFuncDecl();
+    std::unique_ptr<VarDecl>  parseGlobalDecl();
     std::vector<Param> parseParamsOpt();
     Type parseType();
     std::unique_ptr<Block> parseBlock();
@@ -53,5 +56,9 @@ private:
     std::unique_ptr<Expr> parseUnary();       // ! -
     std::unique_ptr<Expr> parsePrimary();
 };
+
+inline SourceLoc LFrom(const Token& t, const std::string& file) {
+    return SourceLoc(file, (unsigned)t.line, (unsigned)t.col);
+}
 
 } // namespace mycc

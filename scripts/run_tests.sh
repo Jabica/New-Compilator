@@ -28,7 +28,11 @@ MUST_PASS=(
 "$ROOT/tests/12_shadowing_ok.my"
 "$ROOT/tests/13_params_implicit_conv_ok.my"
 "$ROOT/tests/14_unary_ok.my"
-"$ROOT/tests/17_conversions_ok.my"
+  "$ROOT/tests/17_conversions_ok.my"
+
+  # Patch 15: globals
+  "$ROOT/tests/30_globals_scalar_ok.my"
+  "$ROOT/tests/31_globals_array_ok.my"
 
 )
 MUST_FAIL=(
@@ -52,7 +56,11 @@ MUST_FAIL=(
 "$ROOT/tests/103_func_redef_diff_signature.my"
 "$ROOT/tests/104_return_value_in_void.my"
 "$ROOT/tests/105_missing_return_in_nonvoid.my"
-"$ROOT/tests/106_if_only_one_branch_returns.my"
+  "$ROOT/tests/106_if_only_one_branch_returns.my"
+
+  # Patch 15: globals invalid
+  "$ROOT/tests/110_global_init_nonliteral_fail.my"
+  "$ROOT/tests/111_global_array_bad_len_fail.my"
 )
 
 pass=0
@@ -354,6 +362,18 @@ fi
 if [[ -x "$ROOT/scripts/run_debug_tests.sh" ]]; then
   echo
   "$ROOT/scripts/run_debug_tests.sh" || true
+fi
+
+# --- DILocation smoke ---
+if [[ -x "$ROOT/scripts/run_loc_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_loc_tests.sh" || true
+fi
+
+# --- Sanitizer smoke ---
+if [[ -x "$ROOT/scripts/run_sanitizer_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_sanitizer_tests.sh" || true
 fi
 
 [[ $fail -eq 0 ]] || exit 1

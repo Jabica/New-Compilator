@@ -1,0 +1,4 @@
+inteiro X;
+inteiro Y = X + 1; // init global não literal
+funcao main(): inteiro { retorna 0; }
+

@@ -1,0 +1,5 @@
+func main(): inteiro {
+  variavel x: inteiro;
+  x = 1 + 2;
+  retorna x;
+}

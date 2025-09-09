@@ -137,7 +137,9 @@ public:
 
     bool run(Program* prog){
         funcs.clear();
+        globals.clear();
         seedBuiltins();     // registra built-ins
+        checkGlobals(prog); // valida globais e preenche tabela
         collectFuncs(prog); // registra funções do usuário + detecta redefinição
 
         bool ok = true;
@@ -148,6 +150,7 @@ public:
 private:
     Diag& diag;
     std::unordered_map<std::string, FuncSig> funcs;
+    std::unordered_map<std::string, Type> globals;
 
     // Built-ins mínimos (lado semântico)
     void seedBuiltins() {
@@ -190,6 +193,39 @@ private:
             }
 
             funcs.emplace(fptr->name, std::move(sig));
+        }
+    }
+
+    void checkGlobals(Program* prog){
+        for (auto& gptr : prog->globals) {
+            VarDecl* g = gptr.get();
+            // Redeclaração de global
+            if (globals.find(g->name) != globals.end()) {
+                diag.error(0,0, "variavel global redeclarada: " + g->name);
+                continue;
+            }
+            // Tamanho de vetor deve ser literal > 0 (já vem como int literal na gramática)
+            if (g->arrayLen < 0) {
+                diag.error(0,0, "tamanho de vetor invalido em global: " + g->name);
+            }
+            // Init: apenas literal simples quando presente
+            if (g->init) {
+                bool okLit = dynamic_cast<IntLit*>(g->init.get()) != nullptr;
+                if (!okLit) {
+                    diag.error(0,0, "init global deve ser literal simples em '" + g->name + "'");
+                } else {
+                    // Compatibilidade de tipo
+                    Type ti = Type::inteiro();
+                    if (g->type.kind == Type::Logico) {
+                        if (!isIntLiteral01(g->init.get()))
+                            diag.error(0,0, "init global logico deve ser 0 ou 1 em '" + g->name + "'");
+                    }
+                    if (g->arrayLen > 0) {
+                        diag.error(0,0, "vetor global nao suporta inicializacao por literal nesta versao: '" + g->name + "'");
+                    }
+                }
+            }
+            globals.emplace(g->name, g->type);
         }
     }
 
@@ -388,6 +424,8 @@ private:
 
     bool checkFunc(FuncDecl* f){
         Scope top(nullptr);
+        // injeta globais no escopo
+        for (auto& [name, ty] : globals) top.declare(name, ty);
         // declara parâmetros
         for (auto& p : f->params){
             if (!top.declare(p.name, p.type)){

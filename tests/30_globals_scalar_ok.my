@@ -1,0 +1,8 @@
+inteiro G;
+inteiro H = 41;
+
+funcao main(): inteiro {
+  G = H + 1;
+  retorna G;
+}
+

@@ -30,6 +30,8 @@
 // Extra headers for optimization utilities (Patch 11)
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/IPO/InferFunctionAttrs.h>
+// Patch 14: Sanitizers
+#include <llvm/Transforms/Instrumentation/AddressSanitizer.h>
 
 namespace mycc {
 namespace cli {
@@ -76,6 +78,8 @@ int run(int argc, char** argv) {
     bool optProvided = false;          // se o usuário passou --opt
     std::string optPipeline;           // pipeline textual custom
     std::string targetTripleArg;       // --target=<triple>
+    bool useASan = false;              // --asan
+    bool useUBSan = false;             // --ubsan
 
     // Pre-scan: capture opções de otimização em qualquer posição
     for (int i = 1; i < argc; ++i) {
@@ -104,6 +108,10 @@ int run(int argc, char** argv) {
             gPrintPipeline = true;
         } else if (a == "-g" || a == "--debug") {
             debugEnabled = true;
+        } else if (a == "--asan") {
+            useASan = true;
+        } else if (a == "--ubsan") {
+            useUBSan = true;
         }
 
     }
@@ -136,6 +144,8 @@ int run(int argc, char** argv) {
         std::cout << "  --opt-pipeline=<texto>      Pipeline textual personalizado (PassBuilder)\n";
         std::cout << "  --print-pipeline            Mostra pipeline de otimizacao antes de rodar\n";
         std::cout << "  -g | --debug           Gera informacoes de depuracao (DWARF) em ll/obj/asm\n";
+        std::cout << "  --asan               Ativa AddressSanitizer (instrumentacao LLVM)\n";
+        std::cout << "  --ubsan              Ativa UndefinedBehaviorSanitizer (instrumentacao LLVM)\n";
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
         std::cout << "  --target=<triple>    Define o target triple (ex.: aarch64-apple-darwin, x86_64-apple-darwin)\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
@@ -194,6 +204,24 @@ int run(int argc, char** argv) {
                 std::cerr << "error: --target requer um triple (ex.: aarch64-apple-darwin)\n";
                 return 1;
             }
+            if (argc < 3) {
+                std::cerr << "error: faltou o modo e o arquivo de entrada\n";
+                return 1;
+            }
+            mode = argv[2];
+            // recalc modos
+            modeEmitLL = (mode == "--emit-ll" || mode == "--emit-llvm" ||
+                           startsWith(mode, "--emit-ll=") || startsWith(mode, "--emit-llvm="));
+            modeEmitOBJ = (mode == "--emit-obj" || startsWith(mode, "--emit-obj="));
+            modeRun = (mode == "--run");
+            modeEmitEXE = (mode == "--emit-exe" || startsWith(mode, "--emit-exe="));
+            modeEmitLLOpt = (mode == "--emit-ll-opt" || startsWith(mode, "--emit-ll-opt="));
+            modeEmitASM = (mode == "--emit-asm" || startsWith(mode, "--emit-asm="));
+            modeEmitBC  = (mode == "--emit-bc"  || startsWith(mode, "--emit-bc="));
+        }
+
+        // Trata quando --asan/--ubsan vierem antes do modo principal
+        if (mode == "--asan" || mode == "--ubsan") {
             if (argc < 3) {
                 std::cerr << "error: faltou o modo e o arquivo de entrada\n";
                 return 1;
@@ -366,7 +394,7 @@ int run(int argc, char** argv) {
     }
 
     // Helper de otimização: usa OptPipeline textual se fornecida; caso contrário, OptLevel
-    auto optimizeModule = [](llvm::Module& M,
+    auto optimizeModule = [&](llvm::Module& M,
                              llvm::TargetMachine* TM,
                              const std::string& OptLevel,
                              const std::string& OptPipeline,
@@ -406,6 +434,10 @@ int run(int argc, char** argv) {
             MPM = PB.buildPerModuleDefaultPipeline(OL);
         }
 
+        // Patch 14: add sanitizer instrumentation passes
+        (void)useASan; // instrumentation handled in codegen for our targets
+        // UBSan: no dedicated LLVM pass in this build; we inject div-by-zero checks in codegen.
+
         // Patch 11: opcionalmente imprime o pipeline textual antes de executar
         if (gPrintPipeline) {
             std::string Text;
@@ -431,7 +463,7 @@ int run(int argc, char** argv) {
 
     if (diag.hadError) return 1;
 
-    Parser parser(toks, diag);
+    Parser parser(toks, diag, file);
     auto prog = parser.parse();
 
     if (diag.hadError) return 1;
@@ -450,7 +482,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
         // Gera IR
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -476,7 +508,7 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1;
             }
@@ -503,7 +535,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -514,7 +546,7 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional (ou apenas imprimir pipeline com -O0)
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || gPrintPipeline) {
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || gPrintPipeline || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {
@@ -548,7 +580,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -559,7 +591,7 @@ int run(int argc, char** argv) {
         }
 
         // Otimização obrigatória (usa pipeline textual se fornecida; caso contrário, nível)
-        if (!optPipeline.empty() || optProvided || optLevel != "O0") {
+        if (!optPipeline.empty() || optProvided || optLevel != "O0" || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {
@@ -593,7 +625,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -603,7 +635,7 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {
@@ -636,7 +668,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -673,7 +705,7 @@ int run(int argc, char** argv) {
         module->setDataLayout(TM->createDataLayout());
 
         // Otimização opcional (com TM disponível)
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, TM.get(), optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {
@@ -723,7 +755,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -764,7 +796,7 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional (com TM disponível)
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, TM.get(), optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {
@@ -807,7 +839,7 @@ int run(int argc, char** argv) {
         }
 
         // 2) Gera IR
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -845,7 +877,7 @@ int run(int argc, char** argv) {
         module->setDataLayout(TM->createDataLayout());
 
         // Otimização opcional
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {
@@ -930,6 +962,7 @@ int run(int argc, char** argv) {
             + " -o " + shellQuote(outExePath)
             + " " + shellQuote(objTmp)
             + " " + shellQuote(rt);
+        // Sanitizer runtimes not linked explicitly; checks injected in IR
         // Se o SDK padrão estiver incorreto no ambiente, force via xcrun
 #ifdef __APPLE__
         {
@@ -962,7 +995,7 @@ int run(int argc, char** argv) {
         }
 
         // 2) Gera IR
-        Codegen cg("mycc_module", diag, debugEnabled, file);
+        Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -972,7 +1005,7 @@ int run(int argc, char** argv) {
         }
 
         // Otimização opcional
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || useASan || useUBSan) {
             std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {

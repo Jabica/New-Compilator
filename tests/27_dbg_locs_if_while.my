@@ -1,0 +1,13 @@
+func main(): inteiro {
+  variavel s: inteiro;
+  s = 0;
+  se (1 < 2) {
+    s = s + 1;
+  } senao {
+    s = s + 2;
+  }
+  enquanto (s < 10) {
+    s = s + 3;
+  }
+  retorna s;
+}

@@ -1,0 +1,4 @@
+inteiro N;
+inteiro V[N]; // tamanho deve ser literal
+funcao main(): inteiro { retorna 0; }
+

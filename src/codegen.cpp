@@ -8,8 +8,8 @@ namespace mycc {
 
     
 // ------------------------------------------------------------
-Codegen::Codegen(std::string moduleName, Diag& d, bool enableDebug, const std::string& srcPath)
-    : diag(d), debug(enableDebug) {
+Codegen::Codegen(std::string moduleName, Diag& d, bool enableDebug, const std::string& srcPath, bool ubsanEnabled, bool asanEnabled)
+    : diag(d), debug(enableDebug), ubsan(ubsanEnabled), asan(asanEnabled) {
     mod = std::make_unique<llvm::Module>(moduleName, ctx);
     builder = std::make_unique<llvm::IRBuilder<>>(ctx);
     if (debug) setupDebug(moduleName, srcPath);
@@ -17,10 +17,44 @@ Codegen::Codegen(std::string moduleName, Diag& d, bool enableDebug, const std::s
 }
 
 std::unique_ptr<llvm::Module> Codegen::run(Program* p) {
+    emitGlobals(p);
     for (auto& fptr : p->funcs) emitFuncDecl(fptr.get());
     for (auto& fptr : p->funcs) emitFuncBody(fptr.get());
     if (debug && dib) dib->finalize();
     return std::move(mod);
+}
+
+void Codegen::emitGlobals(Program* p) {
+    using namespace llvm;
+    for (auto& gptr : p->globals) {
+        VarDecl* g = gptr.get();
+        llvm::Type* elemTy = ty(g->type.elem());
+        if (g->arrayLen > 0) {
+            auto* arrTy = llvm::ArrayType::get(elemTy, (uint64_t)g->arrayLen);
+            auto* GV = new llvm::GlobalVariable(
+                *mod, arrTy, /*isConstant=*/false,
+                llvm::GlobalValue::ExternalLinkage,
+                llvm::ConstantAggregateZero::get(arrTy),
+                g->name);
+            globalSlots[g->name] = VarSlot{GV, elemTy, /*isGlobal*/true, /*isArray*/true, (size_t)g->arrayLen};
+        } else {
+            llvm::Constant* initC = nullptr;
+            if (g->init) {
+                if (auto lit = dynamic_cast<IntLit*>(g->init.get())) {
+                    initC = llvm::ConstantInt::get(elemTy, lit->value);
+                }
+            }
+            if (!initC) {
+                if (elemTy->isIntegerTy()) initC = llvm::ConstantInt::get(elemTy, 0);
+                else initC = llvm::Constant::getNullValue(elemTy);
+            }
+            auto* GV = new llvm::GlobalVariable(
+                *mod, elemTy, /*isConstant=*/false,
+                llvm::GlobalValue::ExternalLinkage,
+                initC, g->name);
+            globalSlots[g->name] = VarSlot{GV, elemTy, /*isGlobal*/true, /*isArray*/false, 0};
+        }
+    }
 }
 
 void Codegen::setupDebug(const std::string& moduleName, const std::string& srcPath) {
@@ -55,6 +89,12 @@ void Codegen::setupDebug(const std::string& moduleName, const std::string& srcPa
     diVoid = dib->createUnspecifiedType("void");
     diI32  = dib->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
     diI1   = dib->createBasicType("bool", 1,  llvm::dwarf::DW_ATE_boolean);
+}
+
+void Codegen::setLoc(const SourceLoc& L) {
+    if (!debug || !dib || !L.valid() || !curScope) return;
+    auto *DL = llvm::DILocation::get(ctx, L.line, L.col, curScope);
+    builder->SetCurrentDebugLocation(DL);
 }
 
 static llvm::DIType* diFromType(llvm::DIBuilder* D, llvm::DIType* diI32, llvm::DIType* diI1, llvm::DIType* diVoid, const mycc::Type& T) {
@@ -116,6 +156,51 @@ llvm::Value* Codegen::castForReturn(llvm::Value* v, llvm::Type* retTy) {
     return v;
 }
 
+llvm::Value* Codegen::emitUBDivCheck(llvm::Value* denom, const SourceLoc& loc) {
+    if (!ubsan) return nullptr;
+    // if (denom == 0) { puts("runtime error: division by zero"); exit(1); }
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+    auto* i32 = llvm::Type::getInt32Ty(ctx);
+    llvm::Value* d = denom;
+    if (!d->getType()->isIntegerTy(32)) d = builder->CreateZExtOrTrunc(d, i32);
+
+    llvm::Value* isZero = builder->CreateICmpEQ(d, llvm::ConstantInt::get(i32, 0), "iszero");
+    auto* contBB = llvm::BasicBlock::Create(ctx, "div.cont");
+    auto* errBB  = llvm::BasicBlock::Create(ctx, "div.err");
+    builder->CreateCondBr(isZero, errBB, contBB);
+
+    // errBB
+    F->insert(F->end(), errBB);
+    builder->SetInsertPoint(errBB);
+    if (debug && loc.valid() && curScope) {
+        builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, loc.line, loc.col, curScope));
+    }
+    // declare i32 @puts(ptr)
+    llvm::Function* putsFn = mod->getFunction("puts");
+    if (!putsFn) {
+        auto* putsTy = llvm::FunctionType::get(i32, { llvm::PointerType::get(ctx, 0) }, false);
+        putsFn = llvm::Function::Create(putsTy, llvm::Function::ExternalLinkage, "puts", mod.get());
+    }
+    // declare void @exit(i32)
+    llvm::Function* exitFn = mod->getFunction("exit");
+    if (!exitFn) {
+        auto* exitTy = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), { i32 }, false);
+        exitFn = llvm::Function::Create(exitTy, llvm::Function::ExternalLinkage, "exit", mod.get());
+    }
+    auto* msg = builder->CreateGlobalStringPtr("runtime error: division by zero\n");
+    builder->CreateCall(putsFn, { msg });
+    builder->CreateCall(exitFn, { llvm::ConstantInt::get(i32, 1) });
+    builder->CreateUnreachable();
+
+    // contBB
+    F->insert(F->end(), contBB);
+    builder->SetInsertPoint(contBB);
+    if (debug && loc.valid() && curScope) {
+        builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, loc.line, loc.col, curScope));
+    }
+    return nullptr;
+}
+
 Function* Codegen::emitFuncDecl(FuncDecl* f) {
     std::vector<llvm::Type*> params;
     params.reserve(f->params.size());
@@ -172,15 +257,24 @@ void Codegen::emitFuncBody(FuncDecl* f) {
 
     if (debug) {
         if (auto *SP = F->getSubprogram()) {
-            builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, 1, 1, SP));
+            curScope = SP;
+            // Cria um bloco léxico para o corpo da função, ancorado na posição do corpo
+            unsigned bl = (f->body && f->body->loc.valid()) ? f->body->loc.line : (f->loc.valid()? f->loc.line : 1);
+            unsigned bc = (f->body && f->body->loc.valid()) ? f->body->loc.col  : (f->loc.valid()? f->loc.col  : 1);
+            curScope = dib->createLexicalBlock(curScope, difile, bl, bc);
+            builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, bl, bc, curScope));
         }
     }
 
     Scope scope(nullptr);
+    // Torna globais visíveis
+    for (auto& kv : globalSlots) {
+        scope.declare(kv.first, kv.second.ptr, kv.second.elemTy, /*isGlob=*/true, kv.second.isArray, kv.second.arrayLen);
+    }
     for (auto& arg : F->args()) {
         auto* A = createEntryAlloca(F, arg.getType(), std::string(arg.getName()));
         builder->CreateStore(&arg, A);
-        scope.declare(std::string(arg.getName()), A);
+        scope.declare(std::string(arg.getName()), A, arg.getType(), /*isGlob=*/false, /*isArr=*/false, 0);
     }
 
     emitBlock(f->body.get(), scope);
@@ -200,14 +294,25 @@ void Codegen::emitFuncBody(FuncDecl* f) {
 
 // ------------------------------------------------------------
 void Codegen::emitBlock(Block* b, Scope& parent) {
+    // Cria novo escopo léxico de debug para o bloco, se habilitado
+    llvm::DIScope* saved = curScope;
+    if (debug && dib) {
+        unsigned bl = b && b->loc.valid() ? b->loc.line : 1;
+        unsigned bc = b && b->loc.valid() ? b->loc.col  : 1;
+        if (curScope)
+            curScope = dib->createLexicalBlock(curScope, difile, bl, bc);
+    }
+
     Scope local(&parent);
     for (auto& sp : b->stmts) {
         emitStmt(sp.get(), local);
         if (builder->GetInsertBlock()->getTerminator()) break;
     }
+    curScope = saved;
 }
 
 void Codegen::emitStmt(Stmt* s, Scope& scope) {
+    setLoc(s->loc);
     if (auto v = dynamic_cast<VarDecl*>(s)) {
         auto* baseTy = ty(v->type);
         auto* F = builder->GetInsertBlock()->getParent();
@@ -222,11 +327,15 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
             A = createEntryAlloca(F, baseTy, v->name);     // escalar: alloca i32
         }
 
-        scope.declare(v->name, A);
+        if (debug && v->loc.valid() && curScope) {
+            A->setDebugLoc(llvm::DebugLoc(llvm::DILocation::get(ctx, v->loc.line, v->loc.col, curScope)));
+        }
+
+        scope.declare(v->name, A, baseTy, /*isGlob=*/false, v->arrayLen>0, (size_t)v->arrayLen);
 
         if (v->init) {
             auto* initV = emitExpr(v->init.get(), scope);
-            auto* T = A->getAllocatedType();
+            auto* T = baseTy;
             if (T->isIntegerTy(1)) {
                 initV = toBool(initV);
             } else if (T->isIntegerTy(32)) {
@@ -240,23 +349,33 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
     }
 
     if (auto a = dynamic_cast<AssignStmt*>(s)) {
-        auto* A = scope.lookup(a->name);
-        if (!A) {
+        setLoc(a->loc);
+        VarSlot* S = scope.lookup(a->name);
+        if (!S) {
             diag.error(0,0,"codegen: variavel nao declarada: " + a->name);
             return;
         }
         auto* rhs = emitExpr(a->value.get(), scope);
-        auto* T = A->getAllocatedType();
+        auto* T = S->elemTy;
         if (T->isIntegerTy(1)) {
             rhs = toBool(rhs);
         } else if (T->isIntegerTy(32)) {
             rhs = toInt32(rhs);
         }
-        builder->CreateStore(rhs, A);
+        llvm::Value* dst = S->ptr;
+        if (S->isArray && S->isGlobal) {
+            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            dst = builder->CreateInBoundsGEP(
+                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                S->ptr,
+                {zero, zero}, a->name + ".g0");
+        }
+        builder->CreateStore(rhs, dst);
         return;
     }
 
     if (auto ai = dynamic_cast<AssignIndex*>(s)) {
+        setLoc(ai->loc);
         // base deve ser VarRef (suporte 1D)
         auto* baseRef = dynamic_cast<VarRef*>(ai->base.get());
         if (!baseRef) {
@@ -264,8 +383,8 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
             (void)emitExpr(ai->value.get(), scope);
             return;
         }
-        AllocaInst* A = scope.lookup(baseRef->name);
-        if (!A) {
+        VarSlot* S = scope.lookup(baseRef->name);
+        if (!S) {
             diag.error(0,0,"codegen: variavel nao declarada: " + baseRef->name);
             (void)emitExpr(ai->value.get(), scope);
             return;
@@ -277,17 +396,68 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
             idxV = builder->CreateZExtOrTrunc(idxV, llvm::Type::getInt32Ty(ctx));
         }
 
-        // ponteiro para o elemento: gep (base i32*, idx)
-        auto* elemPtr = builder->CreateInBoundsGEP(
-            A->getAllocatedType(), // i32
-            A,                     // i32*
-            idxV,                  // i32
-            baseRef->name + ".elem.ptr"
-        );
+        // Bounds check (Patch 14) when ASan-like checks are enabled
+        if (asan) {
+            int len = (int)S->arrayLen;
+            if (len > 0) {
+                auto* i32 = llvm::Type::getInt32Ty(ctx);
+                llvm::Value* zero = llvm::ConstantInt::get(i32, 0);
+                llvm::Value* lenV = llvm::ConstantInt::get(i32, len);
+                llvm::Value* lt0 = builder->CreateICmpSLT(idxV, zero, "oob.lt0");
+                llvm::Value* geLen = builder->CreateICmpSGE(idxV, lenV, "oob.gelen");
+                llvm::Value* oob = builder->CreateOr(lt0, geLen, "oob");
+
+                llvm::Function* Fun = builder->GetInsertBlock()->getParent();
+                auto* okBB = llvm::BasicBlock::Create(ctx, "idx.ok");
+                auto* errBB = llvm::BasicBlock::Create(ctx, "idx.err");
+                builder->CreateCondBr(oob, errBB, okBB);
+
+                // errBB: print and exit
+                Fun->insert(Fun->end(), errBB);
+                builder->SetInsertPoint(errBB);
+                if (debug && ai->loc.valid() && curScope) builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, ai->loc.line, ai->loc.col, curScope));
+                llvm::Function* putsFn = mod->getFunction("puts");
+                if (!putsFn) {
+                    auto* putsTy = llvm::FunctionType::get(i32, { llvm::PointerType::get(ctx, 0) }, false);
+                    putsFn = llvm::Function::Create(putsTy, llvm::Function::ExternalLinkage, "puts", mod.get());
+                }
+                llvm::Function* exitFn = mod->getFunction("exit");
+                if (!exitFn) {
+                    auto* exitTy = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), { i32 }, false);
+                    exitFn = llvm::Function::Create(exitTy, llvm::Function::ExternalLinkage, "exit", mod.get());
+                }
+                auto* msg = builder->CreateGlobalStringPtr("AddressSanitizer: out of bounds index\n");
+                builder->CreateCall(putsFn, { msg });
+                builder->CreateCall(exitFn, { llvm::ConstantInt::get(i32, 1) });
+                builder->CreateUnreachable();
+
+                // okBB
+                Fun->insert(Fun->end(), okBB);
+                builder->SetInsertPoint(okBB);
+                if (debug && ai->loc.valid() && curScope) builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, ai->loc.line, ai->loc.col, curScope));
+            }
+        }
+
+        // ponteiro para o elemento
+        llvm::Value* elemPtr = nullptr;
+        if (S->isGlobal && S->isArray) {
+            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            elemPtr = builder->CreateInBoundsGEP(
+                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                S->ptr,
+                {zero, idxV},
+                baseRef->name + ".g.elem.ptr");
+        } else {
+            elemPtr = builder->CreateInBoundsGEP(
+                S->elemTy,
+                S->ptr,
+                idxV,
+                baseRef->name + ".elem.ptr");
+        }
 
         // valor a gravar
         Value* val = emitExpr(ai->value.get(), scope);
-        llvm::Type* elemTy = A->getAllocatedType();
+        llvm::Type* elemTy = S->elemTy;
         if (elemTy->isIntegerTy(1)) {
             val = toBool(val);
         } else if (elemTy->isIntegerTy(32)) {
@@ -298,6 +468,7 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
     }
 
     if (auto r = dynamic_cast<ReturnStmt*>(s)) {
+        setLoc(r->loc);
         if (r->value) {
             auto* val = emitExpr(r->value.get(), scope);
             auto* F = builder->GetInsertBlock()->getParent();
@@ -326,27 +497,36 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
 // ------------------------------------------------------------
 Value* Codegen::emitExpr(Expr* e, Scope& scope) {
+    setLoc(e->loc);
     if (auto i = dynamic_cast<IntLit*>(e)) {
         return ConstantInt::get(llvm::Type::getInt32Ty(ctx), i->value, /*isSigned=*/true);
     }
 
     if (auto v = dynamic_cast<VarRef*>(e)) {
-        AllocaInst* A = scope.lookup(v->name);
-        if (!A) {
+        VarSlot* S = scope.lookup(v->name);
+        if (!S) {
             diag.error(0,0,"codegen: variavel nao declarada: " + v->name);
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
-        // Carrega escalar. Se for um vetor e o usuário usar 'v' nu, faremos load do elemento 0.
-        // (caso raro; o normal é usar v[i])
-        Value* ptr = A;
-        return builder->CreateLoad(A->getAllocatedType(), ptr, v->name + ".val");
+        // Carrega escalar; se vetor, pega elemento 0
+        Value* ptr = S->ptr;
+        if (S->isArray && S->isGlobal) {
+            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            ptr = builder->CreateInBoundsGEP(
+                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                S->ptr,
+                {zero, zero}, v->name + ".g0");
+        }
+        return builder->CreateLoad(S->elemTy, ptr, v->name + ".val");
     }
 
     if (auto u = dynamic_cast<Unary*>(e)) {
+        setLoc(u->loc);
         return emitUnary(u, scope);
     }
 
     if (auto b = dynamic_cast<Binary*>(e)) {
+        setLoc(b->loc);
         return emitBinary(b, scope);
     }
 
@@ -381,8 +561,8 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
             diag.error(0,0,"codegen: indexacao com base nao suportada");
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
-        AllocaInst* A = scope.lookup(baseRef->name);
-        if (!A) {
+        VarSlot* S = scope.lookup(baseRef->name);
+        if (!S) {
             diag.error(0,0,"codegen: variavel nao declarada: " + baseRef->name);
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
@@ -390,13 +570,18 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
         if (!idxV->getType()->isIntegerTy(32)) {
             idxV = builder->CreateZExtOrTrunc(idxV, llvm::Type::getInt32Ty(ctx));
         }
-        auto* elemPtr = builder->CreateInBoundsGEP(
-            A->getAllocatedType(), // i32
-            A,                     // i32*
-            idxV,
-            baseRef->name + ".elem.ptr"
-        );
-        return builder->CreateLoad(A->getAllocatedType(), elemPtr, baseRef->name + ".elem");
+        llvm::Value* elemPtr = nullptr;
+        if (S->isGlobal && S->isArray) {
+            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            elemPtr = builder->CreateInBoundsGEP(
+                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                S->ptr,
+                {zero, idxV}, baseRef->name + ".g.elem.ptr");
+        } else {
+            elemPtr = builder->CreateInBoundsGEP(
+                S->elemTy, S->ptr, idxV, baseRef->name + ".elem.ptr");
+        }
+        return builder->CreateLoad(S->elemTy, elemPtr, baseRef->name + ".elem");
     }
 
     return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
@@ -470,8 +655,14 @@ Value* Codegen::emitBinary(Binary* b, Scope& scope) {
     if (op=="+")  return builder->CreateAdd(L, R, "addtmp");
     if (op=="-")  return builder->CreateSub(L, R, "subtmp");
     if (op=="*")  return builder->CreateMul(L, R, "multmp");
-    if (op=="/")  return builder->CreateSDiv(L, R, "divtmp");
-    if (op=="%")  return builder->CreateSRem(L, R, "modtmp");
+    if (op=="/")  {
+        (void)emitUBDivCheck(R, b->loc);
+        return builder->CreateSDiv(L, R, "divtmp");
+    }
+    if (op=="%")  {
+        (void)emitUBDivCheck(R, b->loc);
+        return builder->CreateSRem(L, R, "modtmp");
+    }
 
     Value* cmp = nullptr;
     if (op=="<")   cmp = builder->CreateICmpSLT(L, R, "cmptmp");
@@ -486,6 +677,7 @@ Value* Codegen::emitBinary(Binary* b, Scope& scope) {
 }
 
 void Codegen::emitIf(IfStmt* s, Scope& scope) {
+    setLoc(s->loc);
     llvm::Function* F = builder->GetInsertBlock()->getParent();
 
     auto* thenBB  = llvm::BasicBlock::Create(ctx, "if.then", F);
@@ -511,6 +703,7 @@ void Codegen::emitIf(IfStmt* s, Scope& scope) {
 }
 
 void Codegen::emitWhile(WhileStmt* s, Scope& scope) {
+    setLoc(s->loc);
     llvm::Function* F = builder->GetInsertBlock()->getParent();
 
     auto* condBB = llvm::BasicBlock::Create(ctx, "while.cond", F);

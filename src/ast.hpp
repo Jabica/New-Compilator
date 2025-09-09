@@ -6,7 +6,19 @@
 
 namespace mycc {
 
+// Informações de origem (arquivo/linha/coluna)
+struct SourceLoc {
+    std::string file; // opcional
+    unsigned line = 0;
+    unsigned col  = 0;
+    SourceLoc() = default;
+    SourceLoc(std::string f, unsigned l, unsigned c)
+        : file(std::move(f)), line(l), col(c) {}
+    bool valid() const { return line != 0; }
+};
+
 struct Node {
+    SourceLoc loc; // posição no código-fonte
     virtual ~Node() = default;
     virtual void dump(std::ostream& os, int depth=0) const = 0;
 };
@@ -42,13 +54,13 @@ struct Block; // forward declaration
 // ===== EXPRESSÕES =====
 struct IntLit : Expr {
     int value;
-    explicit IntLit(int v): value(v){}
+    explicit IntLit(int v, SourceLoc L = {}) : value(v) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override { indent(os,d); os<<"IntLit("<<value<<")\n"; }
 };
 
 struct VarRef : Expr {
     std::string name;
-    explicit VarRef(std::string n) : name(std::move(n)) {}
+    explicit VarRef(std::string n, SourceLoc L = {}) : name(std::move(n)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "VarRef(" << name << ")\n";
     }
@@ -57,7 +69,8 @@ struct VarRef : Expr {
 struct Unary : Expr {
     std::string op;                 // "!" ou "-"
     std::unique_ptr<Expr> rhs;
-    Unary(std::string o, std::unique_ptr<Expr> e) : op(std::move(o)), rhs(std::move(e)) {}
+    Unary(std::string o, std::unique_ptr<Expr> e, SourceLoc L = {})
+        : op(std::move(o)), rhs(std::move(e)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "Unary(" << op << ")\n";
         if (rhs) rhs->dump(os, d+1);
@@ -68,8 +81,8 @@ struct Binary : Expr {
     std::string op;                 // "+", "-", "*", "/", "%", "<", "<=", ...
     std::unique_ptr<Expr> lhs;
     std::unique_ptr<Expr> rhs;
-    Binary(std::unique_ptr<Expr> L, std::string o, std::unique_ptr<Expr> R)
-        : op(std::move(o)), lhs(std::move(L)), rhs(std::move(R)) {}
+    Binary(std::unique_ptr<Expr> L, std::string o, std::unique_ptr<Expr> R, SourceLoc Lc = {})
+        : op(std::move(o)), lhs(std::move(L)), rhs(std::move(R)) { loc = std::move(Lc); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "Binary(" << op << ")\n";
         if (lhs) lhs->dump(os, d+1);
@@ -81,8 +94,8 @@ struct Binary : Expr {
 struct Call : Expr {
     std::string callee;
     std::vector<std::unique_ptr<Expr>> args;
-    Call(std::string n, std::vector<std::unique_ptr<Expr>> as)
-        : callee(std::move(n)), args(std::move(as)) {}
+    Call(std::string n, std::vector<std::unique_ptr<Expr>> as, SourceLoc L = {})
+        : callee(std::move(n)), args(std::move(as)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "Call " << callee << "\n";
         for (auto& a : args) a->dump(os, d+1);
@@ -93,8 +106,8 @@ struct Call : Expr {
 struct Index : Expr {
     std::unique_ptr<Expr> base;
     std::unique_ptr<Expr> idx;
-    Index(std::unique_ptr<Expr> b, std::unique_ptr<Expr> i)
-        : base(std::move(b)), idx(std::move(i)) {}
+    Index(std::unique_ptr<Expr> b, std::unique_ptr<Expr> i, SourceLoc L = {})
+        : base(std::move(b)), idx(std::move(i)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "Index\n";
         if (base) { indent(os,d+1); os << "base:\n"; base->dump(os, d+2); }
@@ -108,6 +121,9 @@ struct VarDecl : Stmt {
     Type type;
     int arrayLen = 0;                 // <-- NOVO: 0 = escalar; >0 = tamanho do vetor
     std::unique_ptr<Expr> init;       // opcional
+    VarDecl() = default;
+    VarDecl(std::string n, Type t, int len, std::unique_ptr<Expr> i, SourceLoc L = {})
+        : name(std::move(n)), type(t), arrayLen(len), init(std::move(i)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d);
         os<<"VarDecl "<<name<<": "<<type.str();
@@ -119,6 +135,8 @@ struct VarDecl : Stmt {
 
 struct ReturnStmt : Stmt {
     std::unique_ptr<Expr> value; // opcional
+    ReturnStmt() = default;
+    explicit ReturnStmt(std::unique_ptr<Expr> v, SourceLoc L = {}) : value(std::move(v)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os<<"Return\n";
         if(value){ value->dump(os,d+1); }
@@ -128,6 +146,8 @@ struct ReturnStmt : Stmt {
 struct AssignStmt : Stmt {
     std::string name;
     std::unique_ptr<Expr> value;
+    AssignStmt() = default;
+    AssignStmt(std::string n, std::unique_ptr<Expr> v, SourceLoc L = {}) : name(std::move(n)), value(std::move(v)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "Assign " << name << "\n";
         if (value) value->dump(os, d+1);
@@ -139,8 +159,8 @@ struct AssignIndex : Stmt {
     std::unique_ptr<Expr> base;   // normalmente VarRef
     std::unique_ptr<Expr> index;  // expr do índice
     std::unique_ptr<Expr> value;  // valor
-    AssignIndex(std::unique_ptr<Expr> b, std::unique_ptr<Expr> i, std::unique_ptr<Expr> v)
-        : base(std::move(b)), index(std::move(i)), value(std::move(v)) {}
+    AssignIndex(std::unique_ptr<Expr> b, std::unique_ptr<Expr> i, std::unique_ptr<Expr> v, SourceLoc L = {})
+        : base(std::move(b)), index(std::move(i)), value(std::move(v)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "AssignIndex\n";
         if (base)  { indent(os,d+1); os<<"base:\n";  base->dump(os,d+2); }
@@ -151,7 +171,7 @@ struct AssignIndex : Stmt {
 
 struct ExprStmt : Stmt {
     std::unique_ptr<Expr> expr;
-    explicit ExprStmt(std::unique_ptr<Expr> e) : expr(std::move(e)) {}
+    explicit ExprStmt(std::unique_ptr<Expr> e, SourceLoc L = {}) : expr(std::move(e)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "ExprStmt\n";
         if (expr) expr->dump(os, d+1);
@@ -160,6 +180,8 @@ struct ExprStmt : Stmt {
 
 struct Block : Stmt {
     std::vector<std::unique_ptr<Stmt>> stmts;
+    Block() = default;
+    explicit Block(SourceLoc L) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os<<"Block\n";
         for (auto& s : stmts) s->dump(os,d+1);
@@ -170,6 +192,9 @@ struct IfStmt : Stmt {
     std::unique_ptr<Expr>  cond;
     std::unique_ptr<Block> thenBlk;
     std::unique_ptr<Block> elseBlk; // opcional
+    IfStmt() = default;
+    IfStmt(std::unique_ptr<Expr> c, std::unique_ptr<Block> t, std::unique_ptr<Block> e, SourceLoc L = {})
+        : cond(std::move(c)), thenBlk(std::move(t)), elseBlk(std::move(e)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "IfStmt\n";
         if (cond){ indent(os,d+1); os << "cond:\n"; cond->dump(os,d+2); }
@@ -181,6 +206,9 @@ struct IfStmt : Stmt {
 struct WhileStmt : Stmt {
     std::unique_ptr<Expr>  cond;
     std::unique_ptr<Block> body;
+    WhileStmt() = default;
+    WhileStmt(std::unique_ptr<Expr> c, std::unique_ptr<Block> b, SourceLoc L = {})
+        : cond(std::move(c)), body(std::move(b)) { loc = std::move(L); }
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os << "WhileStmt\n";
         if (cond){ indent(os,d+1); os << "cond:\n"; cond->dump(os,d+2); }
@@ -196,6 +224,7 @@ struct FuncDecl : Node {
     std::vector<Param> params;
     Type ret;
     std::unique_ptr<Block> body;
+    FuncDecl() = default;
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os<<"FuncDecl "<<name<<"(";
         for (size_t i=0;i<params.size();++i){
@@ -208,9 +237,11 @@ struct FuncDecl : Node {
 };
 
 struct Program : Node {
+    std::vector<std::unique_ptr<VarDecl>>  globals; // globais no topo do arquivo
     std::vector<std::unique_ptr<FuncDecl>> funcs;
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d); os<<"Program\n";
+        for (auto& g : globals) { indent(os,d+1); os<<"global "; g->dump(os, d+2); }
         for (auto& f : funcs) f->dump(os,d+1);
     }
 };

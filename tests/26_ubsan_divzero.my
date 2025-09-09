@@ -1,0 +1,6 @@
+func main(): inteiro {
+  variavel x: inteiro;
+  x = 10 / 0; // divisão por zero → UB
+  retorna x;
+}
+

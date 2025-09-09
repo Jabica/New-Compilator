@@ -16,7 +16,7 @@ namespace mycc {
 
 class Codegen {
 public:
-    Codegen(std::string moduleName, Diag& d, bool enableDebug = false, const std::string& srcPath = "");
+    Codegen(std::string moduleName, Diag& d, bool enableDebug = false, const std::string& srcPath = "", bool ubsanEnabled = false, bool asanEnabled = false);
     // Gera IR para um Programa. Retorna ponteiro para Module pronto.
     std::unique_ptr<llvm::Module> run(Program* prog);
 
@@ -30,20 +30,29 @@ private:
     std::unique_ptr<llvm::Module>      mod;
     std::unique_ptr<llvm::IRBuilder<>> builder;
 
-    // Escopo de variáveis (nome -> alocação)
+    struct VarSlot {
+        llvm::Value* ptr = nullptr;     // alloca*, GlobalVariable*, ou ptr para elemento
+        llvm::Type*  elemTy = nullptr;  // tipo do elemento (i32/i1)
+        bool isGlobal = false;
+        bool isArray  = false;
+        size_t arrayLen = 0;            // 0 = escalar
+    };
+
+    // Escopo de variáveis (nome -> slot)
     struct Scope {
-        std::unordered_map<std::string, llvm::AllocaInst*> locals;
+        std::unordered_map<std::string, VarSlot> locals;
         Scope* parent = nullptr;
         explicit Scope(Scope* p=nullptr) : parent(p) {}
-        llvm::AllocaInst* lookup(const std::string& n) const {
+        VarSlot* lookup(const std::string& n) {
             for (auto s=this; s; s=s->parent) {
                 auto it = s->locals.find(n);
-                if (it!=s->locals.end()) return it->second;
+                if (it!=s->locals.end()) return &it->second;
             }
             return nullptr;
         }
-        bool declare(const std::string& n, llvm::AllocaInst* a) {
-            return locals.emplace(n, a).second;
+        void declare(const std::string& n, llvm::Value* p, llvm::Type* ty,
+                     bool isGlob=false, bool isArr=false, size_t nElem=0) {
+            locals[n] = VarSlot{p, ty, isGlob, isArr, nElem};
         }
     };
 
@@ -52,12 +61,14 @@ private:
     llvm::Type*       ty(const Type& t);
     llvm::Function*   emitFuncDecl(FuncDecl* f);
     llvm::AllocaInst* createEntryAlloca(llvm::Function* F, llvm::Type* T, const std::string& name);
+    void emitGlobals(Program* p);
 
     // ---- Conversions helpers ----
     llvm::Value* toBool  (llvm::Value* v);                 // iN -> i1
     llvm::Value* toInt32 (llvm::Value* v);                 // i1/iN -> i32
     llvm::Value* castForParam (llvm::Value* v, llvm::Type* paramTy);
     llvm::Value* castForReturn(llvm::Value* v, llvm::Type* retTy);
+    llvm::Value* emitUBDivCheck(llvm::Value* denom, const SourceLoc& loc);
 
     // ---- Emissão por nó ----
     void emitFuncBody(FuncDecl* f);
@@ -72,13 +83,19 @@ private:
     llvm::Value* emitBinary(Binary* b, Scope& scope);
 
     // ---- Debug info ----
+    void setLoc(const SourceLoc& L);
     bool debug = false;
+    bool ubsan = false;
+    bool asan = false;
     std::unique_ptr<llvm::DIBuilder> dib;
     llvm::DICompileUnit* cu = nullptr;
     llvm::DIFile* difile = nullptr;
     llvm::DIType* diI32 = nullptr;
     llvm::DIType* diI1  = nullptr;
     llvm::DIType* diVoid= nullptr;
+    llvm::DIScope* curScope = nullptr; // subprogram ou lexical block atual
+    // tabela de globais
+    std::unordered_map<std::string, VarSlot> globalSlots;
 };
 
 } // namespace mycc
