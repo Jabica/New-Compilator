@@ -476,6 +476,40 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
         idxs.push_back(last);
         auto it = arrayDimsByName.find(name);
         if (it == arrayDimsByName.end()) { diag.error(0,0, "codegen: variavel escalar nao suporta indexacao"); (void)emitExpr(ai->value.get(), scope); return; }
+        // Açúcar: se faltou 1 índice (under-indexing 1D), tratar como copy/fill de slice
+        if (idxs.size() + 1 == it->second.size()) {
+            // constrói destino como slice contíguo 1D (linha)
+            llvm::Value* offPrefix = linearizeOffset(it->second, idxs);
+            llvm::Value* baseI32Ptr = nullptr;
+            if (S->isGlobal && S->isArray) {
+                auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                baseI32Ptr = builder->CreateInBoundsGEP(
+                    llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                    S->ptr,
+                    std::array<llvm::Value*,2>{zero, offPrefix}, name + ".g.slice.base");
+            } else {
+                baseI32Ptr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, offPrefix, name + ".slice.base");
+            }
+            Slice1D dst;
+            dst.baseI8   = builder->CreateBitCast(baseI32Ptr, llvm::PointerType::get(ctx, 0));
+            dst.lenElems = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), it->second.back());
+            dst.strideB  = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 4);
+            dst.elemBytes= 4;
+
+            bool rhsIsSlice = (dynamic_cast<Index*>(ai->value.get()) != nullptr);
+            bool rhsIsCol   = false;
+            if (auto call = dynamic_cast<Call*>(ai->value.get())) rhsIsCol = (call->callee == "m_col" || call->callee == "slice");
+            if (rhsIsSlice || rhsIsCol) {
+                Slice1D src = getSlice1D(ai->value.get(), scope);
+                if (!src.isValid()) { diag.error(0,0, "atribuicao de slice: rhs nao e view 1D"); return; }
+                emitCopySlice(dst, src);
+                return;
+            } else {
+                llvm::Value* v = emitExpr(ai->value.get(), scope);
+                emitFillSlice(dst, v);
+                return;
+            }
+        }
         if (idxs.size() != it->second.size()) { diag.error(0,0, "codegen: numero de indices diferente das dimensoes do array"); (void)emitExpr(ai->value.get(), scope); return; }
         llvm::Value* off = linearizeOffset(it->second, idxs);
         // Optional ASan-like OOB check (educational)
@@ -640,7 +674,7 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
     }
 
     if (auto c = dynamic_cast<Call*>(e)) {
-        // R2-11: intercepta built-ins copy/fill para emitir memcpy/memset
+        // R2-11/12: intercepta built-ins copy/fill para emitir memcpy/memset (ou laços estridados)
         if (c->callee == "copy") {
             if (c->args.size() != 2) {
                 diag.error(0,0, "copy espera 2 argumentos");
@@ -672,6 +706,12 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
             llvm::Value* valI8 = builder->CreateTrunc(val, llvm::Type::getInt8Ty(ctx));
             auto align = llvm::MaybeAlign(dst.elemBytes);
             builder->CreateMemSet(dst.basePtrI8, valI8, dst.lenBytes, align);
+            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        }
+        // R2-13: slice/transpose são tokens reconhecidos em getSlice1D/Index; aqui retornamos dummy
+        if (c->callee == "slice" || c->callee == "transpose") {
+            if (c->callee == "slice" && c->args.size() != 4) diag.error(0,0, "slice: use slice(view,start,len,step)");
+            if (c->callee == "transpose" && c->args.size() != 1) diag.error(0,0, "transpose: aridade invalida");
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
         llvm::Function* callee = mod->getFunction(c->callee);
@@ -1156,5 +1196,211 @@ Codegen::ViewInfo Codegen::getContiguous1DView(Expr* e, Scope& scope) {
     vi.lenBytes = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), lenElems * 4);
     vi.elemBytes = 4;
     return vi;
+}
+} // namespace mycc
+
+// R2-12: slices 1D com stride (linhas/colunas via helper m_col)
+namespace mycc {
+Codegen::Slice1D Codegen::getSlice1D(Expr* e, Scope& scope) {
+    Slice1D s;
+    // transpose(m)[j]
+    if (auto ix = dynamic_cast<Index*>(e)) {
+        if (auto callTr = dynamic_cast<Call*>(ix->base.get())) {
+            if (callTr->callee == "transpose" && callTr->args.size() == 1) {
+                if (auto vr = dynamic_cast<VarRef*>(callTr->args[0].get())) {
+                    VarSlot* S = scope.lookup(vr->name);
+                    if (!S) return s;
+                    auto it = arrayDimsByName.find(vr->name);
+                    if (it == arrayDimsByName.end() || it->second.size() != 2) return s;
+                    int rows = it->second[0];
+                    int cols = it->second[1];
+                    llvm::Value* jV = emitExpr(ix->idx.get(), scope);
+                    if (!jV->getType()->isIntegerTy(32)) jV = builder->CreateZExtOrTrunc(jV, llvm::Type::getInt32Ty(ctx));
+                    llvm::Value* baseI32Ptr = nullptr;
+                    if (S->isGlobal && S->isArray) {
+                        auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                        baseI32Ptr = builder->CreateInBoundsGEP(
+                            llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(), S->ptr,
+                            std::array<llvm::Value*,2>{zero, jV}, vr->name + ".g.tcol.base");
+                    } else {
+                        baseI32Ptr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, jV, vr->name + ".tcol.base");
+                    }
+                    s.baseI8   = builder->CreateBitCast(baseI32Ptr, llvm::PointerType::get(ctx, 0));
+                    s.lenElems = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), rows);
+                    s.strideB  = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), cols * 4);
+                    s.elemBytes= 4;
+                    return s;
+                }
+            }
+        }
+    }
+    // slice(view,start,len,step)
+    if (auto callS = dynamic_cast<Call*>(e)) {
+        if (callS->callee == "slice" && callS->args.size() == 4) {
+            Slice1D base = getSlice1D(callS->args[0].get(), scope);
+            if (!base.isValid()) return s;
+            auto toI32 = [&](Expr* ex){ llvm::Value* v=emitExpr(ex,scope); if(!v->getType()->isIntegerTy(32)) v=builder->CreateZExtOrTrunc(v, llvm::Type::getInt32Ty(ctx)); return v; };
+            llvm::Value* start = toI32(callS->args[1].get());
+            llvm::Value* len   = toI32(callS->args[2].get());
+            llvm::Value* step  = toI32(callS->args[3].get());
+            // validações triviais
+            if (auto cst = llvm::dyn_cast<llvm::ConstantInt>(step)) {
+                if (cst->getSExtValue() <= 0) { diag.error(0,0, "slice: step deve ser > 0"); return s; }
+            }
+            if (auto cstL = llvm::dyn_cast<llvm::ConstantInt>(len)) {
+                if (cstL->getSExtValue() < 0) { diag.error(0,0, "slice: len deve ser >= 0"); return s; }
+            }
+            // offset inicial em bytes = start * base.strideB
+            llvm::Value* startBytes = builder->CreateMul(start, base.strideB);
+            s.baseI8   = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), base.baseI8, startBytes);
+            s.lenElems = len;
+            s.strideB  = builder->CreateMul(step, base.strideB);
+            s.elemBytes= base.elemBytes;
+            return s;
+        }
+    }
+    if (auto call = dynamic_cast<Call*>(e)) {
+        if (call->callee == "m_col" && call->args.size() == 2) {
+            if (auto vr = dynamic_cast<VarRef*>(call->args[0].get())) {
+                VarSlot* S = scope.lookup(vr->name);
+                if (!S) return s;
+                auto it = arrayDimsByName.find(vr->name);
+                if (it == arrayDimsByName.end() || it->second.size() != 2) return s;
+                int rows = it->second[0];
+                int cols = it->second[1];
+                llvm::Value* j = emitExpr(call->args[1].get(), scope);
+                if (!j->getType()->isIntegerTy(32)) j = builder->CreateZExtOrTrunc(j, llvm::Type::getInt32Ty(ctx));
+                llvm::Value* off = j;
+                llvm::Value* baseI32Ptr = nullptr;
+                if (S->isGlobal && S->isArray) {
+                    auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                    baseI32Ptr = builder->CreateInBoundsGEP(
+                        llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(), S->ptr,
+                        std::array<llvm::Value*,2>{zero, off}, vr->name + ".g.col.base");
+                } else {
+                    baseI32Ptr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, vr->name + ".col.base");
+                }
+                s.baseI8   = builder->CreateBitCast(baseI32Ptr, llvm::PointerType::get(ctx, 0));
+                s.lenElems = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), rows);
+                s.strideB  = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), cols * 4);
+                s.elemBytes= 4;
+                return s;
+            }
+        }
+    }
+    std::string name;
+    std::vector<llvm::Value*> idxs;
+    if (auto ix = dynamic_cast<Index*>(e)) {
+        auto pair = flattenIndexChain(e, scope);
+        name = pair.first; idxs = std::move(pair.second);
+    } else if (auto vr = dynamic_cast<VarRef*>(e)) {
+        name = vr->name;
+    } else {
+        return s;
+    }
+    if (name.empty()) return s;
+    VarSlot* S = scope.lookup(name); if (!S) return s;
+    auto it = arrayDimsByName.find(name); if (it == arrayDimsByName.end()) return s;
+    size_t rank = it->second.size(); if (rank == 0) return s;
+    if (rank == 1 && idxs.empty()) {
+        llvm::Value* baseI32Ptr = nullptr;
+        if (S->isGlobal && S->isArray) {
+            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            baseI32Ptr = builder->CreateInBoundsGEP(
+                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(), S->ptr,
+                std::array<llvm::Value*,2>{zero, zero}, name + ".g.base");
+        } else {
+            baseI32Ptr = S->ptr;
+        }
+        s.baseI8   = builder->CreateBitCast(baseI32Ptr, llvm::PointerType::get(ctx, 0));
+        s.lenElems = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), it->second[0]);
+        s.strideB  = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 4);
+        s.elemBytes= 4; return s;
+    }
+    if (idxs.size() + 1 == rank) {
+        llvm::Value* off = linearizeOffset(it->second, idxs);
+        llvm::Value* baseI32Ptr = nullptr;
+        if (S->isGlobal && S->isArray) {
+            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            baseI32Ptr = builder->CreateInBoundsGEP(
+                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(), S->ptr,
+                std::array<llvm::Value*,2>{zero, off}, name + ".g.row.base");
+        } else {
+            baseI32Ptr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".row.base");
+        }
+        s.baseI8   = builder->CreateBitCast(baseI32Ptr, llvm::PointerType::get(ctx, 0));
+        s.lenElems = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), it->second.back());
+        s.strideB  = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 4);
+        s.elemBytes= 4; return s;
+    }
+    return s;
+}
+
+void Codegen::emitCopySlice(const Slice1D& dst, const Slice1D& src) {
+    assert(dst.isValid() && src.isValid());
+    auto* i32 = llvm::Type::getInt32Ty(ctx);
+    if (dst.isContiguous() && src.isContiguous()) {
+        llvm::Value* bytes = builder->CreateMul(dst.lenElems, llvm::ConstantInt::get(i32, (int)dst.elemBytes));
+        auto align = llvm::MaybeAlign(dst.elemBytes);
+        builder->CreateMemCpy(dst.baseI8, align, src.baseI8, align, bytes);
+        return;
+    }
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* preBB  = builder->GetInsertBlock();
+    llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(ctx, "slice.copy.loop", F);
+    llvm::BasicBlock* endBB  = llvm::BasicBlock::Create(ctx, "slice.copy.end");
+    builder->CreateBr(loopBB);
+    builder->SetInsertPoint(loopBB);
+    llvm::PHINode* iPhi = builder->CreatePHI(i32, 2, "i");
+    iPhi->addIncoming(llvm::ConstantInt::get(i32, 0), preBB);
+    llvm::Value* dstOffB = builder->CreateMul(iPhi, dst.strideB);
+    llvm::Value* srcOffB = builder->CreateMul(iPhi, src.strideB);
+    auto* dstPi8 = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), dst.baseI8, dstOffB);
+    auto* srcPi8 = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), src.baseI8, srcOffB);
+    auto* i32Ty = llvm::Type::getInt32Ty(ctx);
+    auto* dstP  = builder->CreateBitCast(dstPi8, i32Ty->getPointerTo());
+    auto* srcP  = builder->CreateBitCast(srcPi8, i32Ty->getPointerTo());
+    auto* val   = builder->CreateLoad(i32Ty, srcP);
+    builder->CreateStore(val, dstP);
+    llvm::Value* iNext = builder->CreateAdd(iPhi, llvm::ConstantInt::get(i32, 1));
+    llvm::Value* cond  = builder->CreateICmpSLT(iNext, dst.lenElems);
+    builder->CreateCondBr(cond, loopBB, endBB);
+    iPhi->addIncoming(iNext, loopBB);
+    F->insert(F->end(), endBB);
+    builder->SetInsertPoint(endBB);
+}
+
+void Codegen::emitFillSlice(const Slice1D& dst, llvm::Value* v) {
+    assert(dst.isValid());
+    auto* i32 = llvm::Type::getInt32Ty(ctx);
+    if (dst.isContiguous()) {
+        if (!v->getType()->isIntegerTy(32)) v = builder->CreateZExtOrTrunc(v, i32);
+        auto* v8 = builder->CreateTrunc(v, llvm::Type::getInt8Ty(ctx));
+        llvm::Value* bytes = builder->CreateMul(dst.lenElems, llvm::ConstantInt::get(i32, (int)dst.elemBytes));
+        auto align = llvm::MaybeAlign(dst.elemBytes);
+        builder->CreateMemSet(dst.baseI8, v8, bytes, align);
+        return;
+    }
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* preBB  = builder->GetInsertBlock();
+    llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(ctx, "slice.fill.loop", F);
+    llvm::BasicBlock* endBB  = llvm::BasicBlock::Create(ctx, "slice.fill.end");
+    builder->CreateBr(loopBB);
+    builder->SetInsertPoint(loopBB);
+    llvm::PHINode* iPhi = builder->CreatePHI(i32, 2, "i");
+    iPhi->addIncoming(llvm::ConstantInt::get(i32, 0), preBB);
+    llvm::Value* offB  = builder->CreateMul(iPhi, dst.strideB);
+    auto* dstPi8 = builder->CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx), dst.baseI8, offB);
+    auto* i32Ty = llvm::Type::getInt32Ty(ctx);
+    auto* dstP  = builder->CreateBitCast(dstPi8, i32Ty->getPointerTo());
+    llvm::Value* vv = v;
+    if (!vv->getType()->isIntegerTy(32)) vv = builder->CreateZExtOrTrunc(vv, i32Ty);
+    builder->CreateStore(vv, dstP);
+    llvm::Value* iNext = builder->CreateAdd(iPhi, llvm::ConstantInt::get(i32, 1));
+    llvm::Value* cond  = builder->CreateICmpSLT(iNext, dst.lenElems);
+    builder->CreateCondBr(cond, loopBB, endBB);
+    iPhi->addIncoming(iNext, loopBB);
+    F->insert(F->end(), endBB);
+    builder->SetInsertPoint(endBB);
 }
 } // namespace mycc

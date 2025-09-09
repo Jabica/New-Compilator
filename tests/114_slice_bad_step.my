@@ -1,0 +1,6 @@
+funcao main(): inteiro {
+  variavel m: inteiro[1][4];
+  copy(m[0], slice(m[0], 0, 2, 0)); // step 0 invalido
+  retorna 0;
+}
+

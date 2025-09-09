@@ -98,6 +98,24 @@ private:
     };
     ViewInfo getContiguous1DView(Expr* e, Scope& scope);
 
+    // R2-12: slices 1D com stride (linhas/colunas)
+    struct Slice1D {
+        llvm::Value* baseI8   = nullptr; // i8* do primeiro elemento
+        llvm::Value* lenElems = nullptr; // i32 numero de elementos
+        llvm::Value* strideB  = nullptr; // i32 stride em bytes
+        unsigned elemBytes    = 4;
+        bool isValid() const { return baseI8 && lenElems && strideB; }
+        bool isContiguous() const {
+            if (!isValid()) return false;
+            if (auto C = llvm::dyn_cast<llvm::ConstantInt>(strideB))
+                return C->getSExtValue() == (long long)elemBytes;
+            return false; // conservador
+        }
+    };
+    Slice1D getSlice1D(Expr* e, Scope& scope);
+    void emitCopySlice(const Slice1D& dst, const Slice1D& src);
+    void emitFillSlice(const Slice1D& dst, llvm::Value* v);
+
     // ---- Debug info ----
     void setLoc(const SourceLoc& L);
     bool debug = false;

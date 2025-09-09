@@ -1,0 +1,9 @@
+funcao main(): inteiro {
+  variavel m: inteiro[3][4];
+  m[0][2]=10; m[1][2]=20; m[2][2]=30;
+  copy(transpose(m)[1], transpose(m)[2]);
+  variavel s: inteiro;
+  s = m[0][1] + m[1][1] + m[2][1];
+  retorna s; // 60
+}
+

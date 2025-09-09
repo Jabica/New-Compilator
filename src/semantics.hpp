@@ -309,6 +309,29 @@ private:
             sig.paramDims[1] = {};  // escalar int
             funcs["fill"] = std::move(sig);
         }
+
+        // R2-12: helper de coluna para testes: m_col(m: int[R][C], j:int) -> view 1D (array)
+        {
+            FuncSig sig;
+            Type ret = Type::inteiro(); ret.arrayLen = 1; // marca como array para semântica
+            sig.ret = ret;
+            sig.params = { Type::inteiro(), Type::inteiro() };
+            sig.paramDims.resize(2);
+            sig.paramDims[0] = {0,0}; // 2D array (tamanhos desconhecidos)
+            sig.paramDims[1] = {};    // escalar coluna
+            funcs["m_col"] = std::move(sig);
+        }
+
+        // R2-13: slice(view,start,len,step) -> view 1D (array)
+        {
+            FuncSig sig;
+            Type ret = Type::inteiro(); ret.arrayLen = 1;
+            sig.ret = ret;
+            sig.params = { Type::inteiro(), Type::inteiro(), Type::inteiro(), Type::inteiro() };
+            sig.paramDims.resize(4);
+            sig.paramDims[0] = {0}; // view 1D base
+            funcs["slice"] = std::move(sig);
+        }
     }
 
     void collectFuncs(Program* prog){
@@ -631,17 +654,38 @@ private:
                 if (local.getConst(name)) { diag.error(0,0, "nao e permitido atribuir a constante: " + name); ok=false; }
                 // dims check
                 std::vector<int> dims = local.getDims(name);
-                if (dims.empty()) { const Type* tvar = local.lookup(name); if (!tvar || !tvar->isArray()) { diag.error(0,0, "indexacao em tipo nao-array"); ok=false; } }
-                else if (idxExprs.size() != dims.size()) { diag.error(0,0, "numero de indices diferente das dimensoes do array"); ok=false; }
-                // type compat
-                Type tval = checkExpr(ai->value.get(), local);
-                const Type* tvar = local.lookup(name);
-                if (tvar) {
-                    Type elem = *tvar; elem.arrayLen = 0;
-                    if (!isImplicitlyConvertible(tval, elem)) {
-                        diag.error(0,0, "tipo incompativel na atribuicao ao elemento do array ("+elem.str()+" <- "+tval.str()+")");
-                        ok = false;
+                if (dims.empty()) {
+                    const Type* tvar = local.lookup(name); if (!tvar || !tvar->isArray()) { diag.error(0,0, "indexacao em tipo nao-array"); ok=false; }
+                } else if (idxExprs.size() == dims.size()) {
+                    // atribuicao de elemento escalar
+                    Type tval = checkExpr(ai->value.get(), local);
+                    const Type* tvar = local.lookup(name);
+                    if (tvar) {
+                        Type elem = *tvar; elem.arrayLen = 0;
+                        if (!isImplicitlyConvertible(tval, elem)) {
+                            diag.error(0,0, "tipo incompativel na atribuicao ao elemento do array ("+elem.str()+" <- "+tval.str()+")");
+                            ok = false;
+                        }
                     }
+                } else if (idxExprs.size() + 1 == dims.size()) {
+                    // R2-12: açúcar de atribuicao para slice 1D
+                    // RHS pode ser outro slice (Index...) ou helper 'm_col', ou escalar (fill)
+                    bool rhsIsSlice = dynamic_cast<Index*>(ai->value.get()) != nullptr;
+                    bool rhsIsCol   = false;
+                    if (auto call = dynamic_cast<Call*>(ai->value.get())) rhsIsCol = (getCallName(*call) == "m_col");
+                    Type tval = checkExpr(ai->value.get(), local);
+                    if (rhsIsSlice || rhsIsCol) {
+                        // opcional: se conseguir, validar comprimento igual (dims.back())
+                        // aqui omitimos para manter simples
+                    } else {
+                        // fill com escalar: esperar inteiro
+                        if (tval.isArray() || tval.kind != Type::Inteiro) {
+                            diag.error(0,0, "atribuicao de slice requer inteiro (fill) ou outro slice 1D");
+                            ok = false;
+                        }
+                    }
+                } else {
+                    diag.error(0,0, "numero de indices diferente das dimensoes do array"); ok=false;
                 }
             }
             else if (auto r = dynamic_cast<ReturnStmt*>(sptr.get())){
@@ -1111,7 +1155,31 @@ private:
             }
         }
         if (sig.ret.isArray()){
-            diag.error(0,0, "retorno de array por valor nao suportado em '" + fname + "'");
+            // Exceções: views utilitárias (m_col, slice)
+            if (!(fname == "m_col" || fname == "slice"))
+                diag.error(0,0, "retorno de array por valor nao suportado em '" + fname + "'");
+        }
+        // R2-13: validações slice(view,start,len,step)
+        if (fname == "slice" && c->args.size() == 4) {
+            auto evalConstI = [&](Expr* ex, long long& out)->bool{ auto cv=evalConst(ex); if (!cv.isConst) return false; cv=toInt(cv); out=cv.i; return true; };
+            long long stepV=0, lenV=0; bool stepConst=evalConstI(c->args[3].get(), stepV); bool lenConst=evalConstI(c->args[2].get(), lenV);
+            if (stepConst && stepV <= 0) diag.error(0,0, "slice: step deve ser > 0");
+            if (lenConst && lenV < 0) diag.error(0,0, "slice: len deve ser >= 0");
+            // opcional: bound
+            int baseLen = -1;
+            if (auto vr = dynamic_cast<VarRef*>(c->args[0].get())) {
+                auto D = scope.getDims(vr->name); if (D.size()==1) baseLen = D[0];
+            } else if (auto ix = dynamic_cast<Index*>(c->args[0].get())) {
+                std::vector<Expr*> idxs; Expr* cur = c->args[0].get(); std::string nm;
+                while (auto ix2 = dynamic_cast<Index*>(cur)) { idxs.push_back(ix2->idx.get()); cur = ix2->base.get(); }
+                if (auto vr2 = dynamic_cast<VarRef*>(cur)) nm = vr2->name;
+                auto D = scope.getDims(nm); if (!D.empty() && idxs.size()+1==D.size()) baseLen = D.back();
+            }
+            long long startV=0; (void)evalConstI(c->args[1].get(), startV);
+            if (baseLen > 0 && lenConst && stepConst && lenV > 0 && stepV > 0) {
+                long long last = startV + (lenV-1)*stepV;
+                if (last >= baseLen) diag.error(0,0, "slice: len/step extrapolam o view base");
+            }
         }
         // R2-11: checagem leve de copy(view1D, view1D) para comprimentos quando conhecidos
         if (fname == "copy" && c->args.size() == 2) {
@@ -1148,12 +1216,21 @@ private:
             std::vector<Expr*> idxExprs;
             Expr* cur = e;
             std::string name;
+            bool isTranspose = false; // R2-13: permite base = transpose(var)
             while (auto ix = dynamic_cast<Index*>(cur)) {
                 idxExprs.push_back(ix->idx.get());
                 cur = ix->base.get();
             }
             if (auto vr = dynamic_cast<VarRef*>(cur)) {
                 name = vr->name;
+            } else if (auto call = dynamic_cast<Call*>(cur)) {
+                if (getCallName(*call) == "transpose" && call->args.size() == 1) {
+                    if (auto vr2 = dynamic_cast<VarRef*>(call->args[0].get())) { name = vr2->name; isTranspose = true; }
+                    else { diag.error(0,0, "transpose: argumento deve ser variavel matriz"); return Type::inteiro(); }
+                } else {
+                    diag.error(0,0, "indexacao invalida");
+                    return Type::inteiro();
+                }
             } else {
                 diag.error(0,0, "indexacao invalida");
                 return Type::inteiro();
@@ -1168,6 +1245,12 @@ private:
             }
             // checa dimensões e determina rank resultante
             std::vector<int> dims = scope.getDims(name);
+            if (isTranspose) {
+                if (dims.size() == 2) std::swap(dims[0], dims[1]);
+                else if (!dims.empty()) {
+                    // fora deste patch: só garantimos 2D; mantenha simples
+                }
+            }
             size_t rank = dims.size();
             if (rank == 0) {
                 const Type* tv = scope.lookup(name);

@@ -1,0 +1,7 @@
+funcao main(): inteiro {
+  variavel m: inteiro[2][4];
+  // RHS invalido para fill; use uma view ao inves de escalar valido
+  fill(1, 0); // primeiro argumento deve ser view; falha
+  retorna 0;
+}
+

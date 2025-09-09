@@ -74,6 +74,12 @@ MUST_PASS=(
   "$ROOT/tests/166_slice_3d_2d_ok.my"
   "$ROOT/tests/167_slice_3d_to_1d_ok.my"
   "$ROOT/tests/168_slice_chain_scalar_ok.my"
+  "$ROOT/tests/25_copy_col_ok.my"
+  "$ROOT/tests/26_fill_col_ok.my"
+  "$ROOT/tests/27_slice_assign_sugar_row_ok.my"
+  "$ROOT/tests/28_transpose_col_copy_ok.my"
+  "$ROOT/tests/29_slice_step2_ok.my"
+  "$ROOT/tests/30_slice_fill_ok.my"
 
 )
 MUST_FAIL=(
@@ -135,6 +141,10 @@ MUST_FAIL=(
   "$ROOT/tests/169_slice_nd_as_scalar_op_fail.my"
   "$ROOT/tests/170_slice_rank_mismatch_fail.my"
   "$ROOT/tests/171_slice_assign_nd_fail.my"
+  "$ROOT/tests/111_copy_shape_mismatch.my"
+  "$ROOT/tests/112_fill_view_bad_rhs.my"
+  "$ROOT/tests/113_slice_bad_len.my"
+  "$ROOT/tests/114_slice_bad_step.my"
 )
 
 pass=0
