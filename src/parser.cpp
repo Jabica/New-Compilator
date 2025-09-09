@@ -126,6 +126,13 @@ std::unique_ptr<FuncDecl> Parser::parseFuncDecl(){
 
     expect(TokenKind::Colon, ":");
     fn->ret = parseType();
+    // Proibir retorno de array por valor (ND) no tipo de retorno
+    {
+        auto retDims = takePendingArrayLenList();
+        if (!retDims.empty()) {
+            diag.error(nameTok.line, nameTok.col, std::string("retorno de array por valor nao suportado em '") + fn->name + "'");
+        }
+    }
     fn->body = parseBlock();
     return fn;
 }
