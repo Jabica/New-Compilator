@@ -76,7 +76,9 @@ private:
     void emitStmt    (Stmt* s, Scope& scope);
     void emitIf      (IfStmt* s, Scope& scope);
     void emitWhile   (WhileStmt* s, Scope& scope);
+    void emitDoWhile (DoWhileStmt* s, Scope& scope);
     void emitFor     (ForStmt* s, Scope& scope);
+    void emitSwitch  (SwitchStmt* s, Scope& scope);
 
     // ---- Expressões ----
     llvm::Value* emitExpr  (Expr* e, Scope& scope);

@@ -1,0 +1,14 @@
+funcao main(): inteiro {
+  variavel i: inteiro = 0;
+  variavel s: inteiro = 0;
+  do {
+    variavel j: inteiro = 0;
+    do {
+      s = s + 1;
+      j = j + 1;
+    } while (j < 2);
+    i = i + 1;
+  } while (i < 3);
+  retorna s; // 6
+}
+

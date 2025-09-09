@@ -224,6 +224,20 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
         return parseBlock();
     }
 
+    // do { ... } while (cond);
+    if (peek().kind == TokenKind::KwDo) {
+        Token doTok = expect(TokenKind::KwDo, "do");
+        auto body = parseBlock(); // parseBlock consome '{' e '}'
+        expect(TokenKind::KwWhile, "while");
+        expect(TokenKind::LParen, "(");
+        auto cond = parseExpr();
+        expect(TokenKind::RParen, ")");
+        expect(TokenKind::Semicolon, ";");
+        auto node = std::make_unique<DoWhileStmt>(std::move(body), std::move(cond));
+        node->loc = LFrom(doTok, filename);
+        return node;
+    }
+
     // for
     if (peek().kind == TokenKind::KwFor) {
         pos++; // 'for'
@@ -255,6 +269,7 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
     // cobre: chamadas, exprs puras e atribuicoes como v[i] = x
     if (peek().kind != TokenKind::KwSe &&
         peek().kind != TokenKind::KwEnquanto &&
+        peek().kind != TokenKind::KwSwitch &&
         peek().kind != TokenKind::LBrace) {
 
         auto lhs = parseExpr();
@@ -332,6 +347,38 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
     }
     if (peek().kind == TokenKind::KwEnquanto){
         return parseWhile();
+    }
+
+    // switch (expr) { case N: { bloco } ... [default: { bloco }] }
+    if (peek().kind == TokenKind::KwSwitch) {
+        Token swTok = expect(TokenKind::KwSwitch, "switch");
+        expect(TokenKind::LParen, "(");
+        auto scr = parseExpr();
+        expect(TokenKind::RParen, ")");
+        expect(TokenKind::LBrace, "{");
+
+        auto sw = std::make_unique<SwitchStmt>(std::move(scr));
+        sw->loc = LFrom(swTok, filename);
+
+        // zero ou mais cases
+        while (peek().kind != TokenKind::RBrace && peek().kind != TokenKind::KwDefault && !atEnd()) {
+            expect(TokenKind::KwCase, "case");
+            // exige literal inteiro por enquanto
+            Token valTok = expect(TokenKind::IntLiteral, "literal inteiro");
+            int lit = std::atoi(valTok.lexeme.c_str());
+            expect(TokenKind::Colon, ":");
+            auto body = parseBlock();
+            sw->cases.emplace_back(lit, std::move(body));
+        }
+
+        // default opcional
+        if (match(TokenKind::KwDefault)) {
+            expect(TokenKind::Colon, ":");
+            sw->deflt = parseBlock();
+        }
+
+        expect(TokenKind::RBrace, "}");
+        return sw;
     }
 
     // fallback mínimo

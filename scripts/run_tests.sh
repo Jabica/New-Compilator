@@ -47,6 +47,13 @@ MUST_PASS=(
   "$ROOT/tests/43_prints_many_ok.my"
   "$ROOT/tests/23_for_basic.my"
   "$ROOT/tests/24_break_continue.my"
+  "$ROOT/tests/23_do_while_simple.my"
+  "$ROOT/tests/24_do_while_runs_once.my"
+  "$ROOT/tests/25_do_while_nested.my"
+  "$ROOT/tests/44_switch_simple.my"
+  "$ROOT/tests/45_switch_default.my"
+  "$ROOT/tests/46_switch_multi_cases.my"
+  "$ROOT/tests/47_switch_nested.my"
 
 )
 MUST_FAIL=(
@@ -89,6 +96,10 @@ MUST_FAIL=(
   "$ROOT/tests/107_break_outside_loop.my"
   "$ROOT/tests/108_continue_outside_loop.my"
   "$ROOT/tests/109_for_cond_not_bool.my"
+  "$ROOT/tests/107_do_while_cond_not_bool.my"
+  "$ROOT/tests/124_switch_duplicate_case.my"
+  "$ROOT/tests/125_switch_non_int_cond.my"
+  "$ROOT/tests/126_switch_non_int_case.my"
 )
 
 pass=0

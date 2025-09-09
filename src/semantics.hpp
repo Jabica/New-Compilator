@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <unordered_set>
 
 namespace mycc {
 
@@ -596,6 +597,20 @@ private:
                 loopDepth--;
                 // não assumimos laço infinito
             }
+            else if (auto dw = dynamic_cast<DoWhileStmt*>(sptr.get())){
+                // Semântica: condição deve ser lógica (mesma regra de 'enquanto')
+                loopDepth++;
+                bool retBody=false;
+                ok &= checkBlock(dw->body.get(), local, currentRet, retBody);
+                loopDepth--;
+                {
+                    Type tc = checkExpr(dw->cond.get(), local);
+                    if (tc.isArray() || tc.kind != Type::Logico) {
+                        diag.error(0,0, "condicao de 'do-while' deve ser logico");
+                        ok = false;
+                    }
+                }
+            }
             else if (auto fr = dynamic_cast<ForStmt*>(sptr.get())){
                 // For tem escopo próprio para init
                 Scope forScope(&local);
@@ -646,6 +661,29 @@ private:
                 bool retBody=false;
                 ok &= checkBlock(fr->body.get(), forScope, currentRet, retBody);
                 loopDepth--;
+            }
+            else if (auto sw = dynamic_cast<SwitchStmt*>(sptr.get())){
+                // scrutinee deve ser inteiro (escalares)
+                Type ts = checkExpr(sw->scrutinee.get(), local);
+                if (ts.isArray() || ts.kind != Type::Inteiro) {
+                    diag.error(0,0, "expressao de 'switch' deve ser inteiro");
+                }
+                // cases: sem duplicatas
+                std::unordered_set<int> seen;
+                for (auto& c : sw->cases) {
+                    if (!seen.insert(c.value).second) {
+                        diag.error(0,0, std::string("valor de 'case' duplicado: ") + std::to_string(c.value));
+                    }
+                }
+                // checa blocos dos arms
+                for (auto& c : sw->cases) {
+                    bool retArm=false;
+                    ok &= checkBlock(c.body.get(), local, currentRet, retArm);
+                }
+                if (sw->deflt) {
+                    bool retDef=false;
+                    ok &= checkBlock(sw->deflt.get(), local, currentRet, retDef);
+                }
             }
             else if (dynamic_cast<BreakStmt*>(sptr.get())){
                 if (loopDepth <= 0) diag.error(0,0, "'break' fora de laco");

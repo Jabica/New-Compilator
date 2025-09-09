@@ -532,7 +532,9 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
     if (auto iff = dynamic_cast<IfStmt*>(s)) { emitIf(iff, scope); return; }
     if (auto wh  = dynamic_cast<WhileStmt*>(s)) { emitWhile(wh, scope); return; }
+    if (auto dw  = dynamic_cast<DoWhileStmt*>(s)) { emitDoWhile(dw, scope); return; }
     if (auto fr  = dynamic_cast<ForStmt*>(s))   { emitFor(fr, scope); return; }
+    if (auto sw  = dynamic_cast<SwitchStmt*>(s)) { emitSwitch(sw, scope); return; }
     if (auto brk = dynamic_cast<BreakStmt*>(s)) {
         if (loopStack.empty()) { diag.error(0,0, "codegen: 'break' fora de laco"); return; }
         builder->CreateBr(loopStack.back().endBB);
@@ -808,6 +810,36 @@ void Codegen::emitWhile(WhileStmt* s, Scope& scope) {
     builder->SetInsertPoint(endBB);
 }
 
+void Codegen::emitDoWhile(DoWhileStmt* s, Scope& scope) {
+    setLoc(s->loc);
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+
+    auto* bodyBB = llvm::BasicBlock::Create(ctx, "dowhile.body", F);
+    auto* condBB = llvm::BasicBlock::Create(ctx, "dowhile.cond");
+    auto* endBB  = llvm::BasicBlock::Create(ctx,  "dowhile.end");
+
+    builder->CreateBr(bodyBB);
+
+    // Empilha contexto de laço: continue -> condBB; break -> endBB
+    loopStack.push_back({condBB, condBB, endBB});
+
+    // BODY
+    builder->SetInsertPoint(bodyBB);
+    emitBlock(s->body.get(), scope);
+    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(condBB);
+
+    // COND
+    F->insert(F->end(), condBB);
+    builder->SetInsertPoint(condBB);
+    llvm::Value* cond = toBool(emitExpr(s->cond.get(), scope));
+    builder->CreateCondBr(cond, bodyBB, endBB);
+
+    // END
+    loopStack.pop_back();
+    F->insert(F->end(), endBB);
+    builder->SetInsertPoint(endBB);
+}
+
 void Codegen::emitFor(ForStmt* s, Scope& parent) {
     llvm::Function* F = builder->GetInsertBlock()->getParent();
     Scope local(&parent);
@@ -842,6 +874,65 @@ void Codegen::emitFor(ForStmt* s, Scope& parent) {
 
     loopStack.pop_back();
 
+    F->insert(F->end(), endBB);
+    builder->SetInsertPoint(endBB);
+}
+
+void Codegen::emitSwitch(SwitchStmt* s, Scope& scope) {
+    setLoc(s->loc);
+    llvm::Function* F = builder->GetInsertBlock()->getParent();
+
+    // END block
+    auto* endBB = llvm::BasicBlock::Create(ctx, "switch.end");
+
+    // Prepare case blocks
+    std::vector<std::pair<int, llvm::BasicBlock*>> caseBBs;
+    caseBBs.reserve(s->cases.size());
+    for (auto& c : s->cases) {
+        auto* bb = llvm::BasicBlock::Create(ctx, std::string("switch.case.") + std::to_string(c.value));
+        caseBBs.emplace_back(c.value, bb);
+    }
+    llvm::BasicBlock* defaultBB = s->deflt ? llvm::BasicBlock::Create(ctx, "switch.default") : endBB;
+
+    // Scrutinee to i32
+    llvm::Value* scr = emitExpr(s->scrutinee.get(), scope);
+    if (!scr->getType()->isIntegerTy(32)) scr = builder->CreateZExtOrTrunc(scr, llvm::Type::getInt32Ty(ctx), "switch.scr");
+
+    // Chain of tests
+    llvm::BasicBlock* nextTestBB = nullptr;
+    for (size_t i=0;i<caseBBs.size();++i) {
+        auto* testBB = llvm::BasicBlock::Create(ctx, std::string("switch.test.")+std::to_string(i), F);
+        if (i==0) builder->CreateBr(testBB);
+        else      F->insert(F->end(), testBB);
+        builder->SetInsertPoint(testBB);
+
+        auto [val, caseBB] = caseBBs[i];
+        llvm::Value* cval = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), val);
+        auto* cmp = builder->CreateICmpEQ(scr, cval, "switch.cmp");
+        nextTestBB = (i+1<caseBBs.size()) ? llvm::BasicBlock::Create(ctx, std::string("switch.test.")+std::to_string(i+1))
+                                          : defaultBB;
+        builder->CreateCondBr(cmp, caseBB, nextTestBB);
+        if (nextTestBB != defaultBB) F->insert(F->end(), nextTestBB);
+    }
+
+    // CASE bodies
+    for (size_t i=0;i<caseBBs.size();++i) {
+        auto [val, caseBB] = caseBBs[i];
+        F->insert(F->end(), caseBB);
+        builder->SetInsertPoint(caseBB);
+        emitBlock(s->cases[i].body.get(), scope);
+        if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(endBB);
+    }
+
+    // DEFAULT body
+    if (defaultBB != endBB) {
+        F->insert(F->end(), defaultBB);
+        builder->SetInsertPoint(defaultBB);
+        emitBlock(s->deflt.get(), scope);
+        if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(endBB);
+    }
+
+    // END
     F->insert(F->end(), endBB);
     builder->SetInsertPoint(endBB);
 }

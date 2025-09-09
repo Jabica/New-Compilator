@@ -1,0 +1,7 @@
+funcao main(): inteiro {
+  variavel x: inteiro = 0;
+  do {
+    x = x + 10;
+  } while (1 == 0);   // condicao falsa (logico), executa o corpo 1x
+  retorna x;         // 10
+}

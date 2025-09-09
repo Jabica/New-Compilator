@@ -1,0 +1,9 @@
+funcao main(): inteiro {
+  variavel x: inteiro = 1;
+  switch (x) {
+    case 1: { retorna 1; }
+    case 1: { retorna 2; }
+  }
+  retorna 0;
+}
+

@@ -254,6 +254,20 @@ struct WhileStmt : Stmt {
     }
 };
 
+// R2-01: do { ... } while (cond)
+struct DoWhileStmt : Stmt {
+    std::unique_ptr<Block> body;
+    std::unique_ptr<Expr>  cond;
+    DoWhileStmt() = default;
+    DoWhileStmt(std::unique_ptr<Block> b, std::unique_ptr<Expr> c, SourceLoc L = {})
+        : body(std::move(b)), cond(std::move(c)) { loc = std::move(L); }
+    void dump(std::ostream& os, int d=0) const override {
+        indent(os,d); os << "DoWhile\n";
+        if (body){ indent(os,d+1); os << "body:\n"; body->dump(os,d+2); }
+        if (cond){ indent(os,d+1); os << "cond:\n"; cond->dump(os,d+2); }
+    }
+};
+
 // Patch 20: novos nós de controle de fluxo
 struct BreakStmt : Stmt {
     void dump(std::ostream& os, int d=0) const override { indent(os,d); os << "Break\n"; }
@@ -277,6 +291,31 @@ struct ForStmt : Stmt {
         if (cond) { indent(os,d+1); os << "cond:\n"; cond->dump(os,d+2); }
         if (step) { indent(os,d+1); os << "step:\n"; step->dump(os,d+2); }
         if (body) { indent(os,d+1); os << "body:\n"; body->dump(os,d+2); }
+    }
+};
+
+// R2-02: switch/case/default (sem fallthrough)
+struct CaseArm {
+    int value;
+    std::unique_ptr<Block> body;
+    CaseArm(int v, std::unique_ptr<Block> b) : value(v), body(std::move(b)) {}
+};
+
+struct SwitchStmt : Stmt {
+    std::unique_ptr<Expr>  scrutinee;
+    std::vector<CaseArm>   cases;
+    std::unique_ptr<Block> deflt; // opcional
+    explicit SwitchStmt(std::unique_ptr<Expr> e) : scrutinee(std::move(e)) {}
+    void dump(std::ostream& os, int d=0) const override {
+        indent(os,d); os << "Switch\n";
+        if (scrutinee) {
+            indent(os,d+1); os << "scrutinee:\n"; scrutinee->dump(os, d+2);
+        }
+        for (auto const& c : cases) {
+            indent(os,d+1); os << "case " << c.value << ":\n";
+            if (c.body) c.body->dump(os, d+2);
+        }
+        if (deflt) { indent(os,d+1); os << "default:\n"; deflt->dump(os, d+2); }
     }
 };
 
