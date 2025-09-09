@@ -1,0 +1,16 @@
+funcao main(): inteiro {
+  variavel a: inteiro = 2;
+  variavel b: inteiro = 1;
+  variavel z: inteiro = 0;
+  switch (a) {
+    case 1: { z = 10; }
+    case 2: {
+      switch (b) {
+        case 1: { z = 21; }
+        default: { z = 22; }
+      }
+    }
+    default: { z = z + 100; }
+  }
+  retorna z; // 21 (sem fallthrough; default só roda se nenhum case casar)
+}

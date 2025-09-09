@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+  variavel m: inteiro[2][3];
+  variavel v: inteiro[3];
+  // atribuicao de slice inteiro (view) ainda nao suportada
+  m[0] = v;
+  retorna 0;
+}
+

@@ -80,6 +80,7 @@ int run(int argc, char** argv) {
     std::string targetTripleArg;       // --target=<triple>
     bool useASan = false;              // --asan
     bool useUBSan = false;             // --ubsan
+    std::string fast2dArg = "auto";    // --fast2d=<off|auto|always>
 
     // Pre-scan: capture opções de otimização em qualquer posição
     for (int i = 1; i < argc; ++i) {
@@ -112,6 +113,8 @@ int run(int argc, char** argv) {
             useASan = true;
         } else if (a == "--ubsan") {
             useUBSan = true;
+        } else if (a.rfind("--fast2d=", 0) == 0) {
+            fast2dArg = a.substr(std::string("--fast2d=").size());
         }
 
     }
@@ -147,6 +150,7 @@ int run(int argc, char** argv) {
         std::cout << "  --asan               Ativa AddressSanitizer (instrumentacao LLVM)\n";
         std::cout << "  --ubsan              Ativa UndefinedBehaviorSanitizer (instrumentacao LLVM)\n";
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
+        std::cout << "  --fast2d=<modo>      Controla fast-paths 2D: off|auto|always (padrao: auto)\n";
         std::cout << "  --target=<triple>    Define o target triple (ex.: aarch64-apple-darwin, x86_64-apple-darwin)\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
         std::cout << "\nDica: você pode passar só o arquivo (sem flag) para rodar --check por padrão.\n";
@@ -483,6 +487,12 @@ int run(int argc, char** argv) {
         }
         // Gera IR
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -536,6 +546,12 @@ int run(int argc, char** argv) {
         }
 
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -581,6 +597,12 @@ int run(int argc, char** argv) {
         }
 
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -626,6 +648,12 @@ int run(int argc, char** argv) {
         }
 
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -669,6 +697,12 @@ int run(int argc, char** argv) {
         }
 
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -756,6 +790,12 @@ int run(int argc, char** argv) {
         }
 
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -840,6 +880,12 @@ int run(int argc, char** argv) {
 
         // 2) Gera IR
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -996,6 +1042,12 @@ int run(int argc, char** argv) {
 
         // 2) Gera IR
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
+        {
+            using F = Codegen::Fast2DMode;
+            if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
+            else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
+            else                              cg.setFast2DMode(F::Auto);
+        }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 

@@ -1,0 +1,7 @@
+funcao main(): inteiro {
+  variavel a: inteiro[12];
+  // faltando um argumento (6 esperados)
+  fill2d(a, 4, 0, 7, 2);
+  retorna 0;
+}
+

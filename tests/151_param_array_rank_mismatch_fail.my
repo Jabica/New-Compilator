@@ -1,0 +1,6 @@
+funcao g(m: inteiro[2][2]): inteiro { retorna m[0][0]; }
+funcao main(): inteiro {
+  variavel v: inteiro[4];
+  retorna g(v);
+}
+

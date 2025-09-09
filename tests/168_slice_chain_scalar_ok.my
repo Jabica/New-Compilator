@@ -1,0 +1,6 @@
+funcao main(): inteiro {
+  variavel a: inteiro[2][2][2];
+  a[1][0][1] = 11;
+  retorna a[1][0][1];
+}
+

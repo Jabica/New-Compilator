@@ -1,0 +1,9 @@
+funcao main(): inteiro {
+  variavel m: inteiro[2][4];
+  fill(m[0], 7);
+
+  variavel s: inteiro;
+  s = m[0][0] + m[0][1] + m[0][2] + m[0][3]; // 7*4 = 28
+  retorna s; // 28
+}
+

@@ -19,6 +19,7 @@ public:
     // Se preferir consumir e zerar de uma vez:
     int  takePendingArray()   { int n = pendingArrayLen; pendingArrayLen = 0; return n; }
     std::unique_ptr<Expr> takePendingArrayLenExpr(){ return std::move(pendingArrayLenExpr); }
+    std::vector<std::unique_ptr<Expr>> takePendingArrayLenList(){ return std::move(pendingArrayLenList); }
 
 private:
     const std::vector<Token>& toks;
@@ -26,9 +27,10 @@ private:
     size_t pos = 0;
     std::string filename;
 
-    // Guarda o último tamanho de array lido em parseType() (0 = escalar)
-    int pendingArrayLen = 0; // <- NOVO
-    std::unique_ptr<Expr> pendingArrayLenExpr; // Patch 18: expr bruta entre []
+    // Guarda tamanhos de array lidos em parseType() (ND)
+    int pendingArrayLen = 0; // legado 1D
+    std::unique_ptr<Expr> pendingArrayLenExpr; // legado 1D
+    std::vector<std::unique_ptr<Expr>> pendingArrayLenList; // R2-07: ND
 
     const Token& peek(size_t off=0) const {
         static Token eof{TokenKind::End,"",0,0};

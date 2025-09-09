@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+  variavel a: inteiro[2][3];
+  variavel b: inteiro[2][4];
+  // shapes diferentes (3 vs 4) -> deve falhar (semantica ou codegen)
+  copy(a[0], b[1]);
+  retorna 0;
+}
+

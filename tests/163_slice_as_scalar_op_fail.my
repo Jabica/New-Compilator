@@ -1,0 +1,6 @@
+funcao main(): inteiro {
+  variavel m: inteiro[2][3];
+  // proibido usar slice como escalar em soma
+  retorna m[0] + 1;
+}
+

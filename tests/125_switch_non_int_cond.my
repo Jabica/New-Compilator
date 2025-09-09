@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+  variavel b: logico = verdadeiro;
+  switch (b) {
+    case 0: { retorna 0; }
+    default: { retorna 1; }
+  }
+}
+
