@@ -65,6 +65,12 @@ MUST_PASS=(
   "$ROOT/tests/56_for_sum_skip_even_para.my"
   "$ROOT/tests/57_for_no_init_inc_ok_para.my"
   "$ROOT/tests/58_for_break_and_continue_para.my"
+  "$ROOT/tests/140_param_array_1d_sum_ok.my"
+  "$ROOT/tests/141_param_array_2d_sum_ok.my"
+  "$ROOT/tests/142_param_array_nested_calls_ok.my"
+  "$ROOT/tests/160_slice_1d_param_ok.my"
+  "$ROOT/tests/161_slice_chain_ok.my"
+  "$ROOT/tests/162_slice_index_ok.my"
 
 )
 MUST_FAIL=(
@@ -117,6 +123,12 @@ MUST_FAIL=(
   "$ROOT/tests/130_fallthrough_in_last_case_without_next.my"
   "$ROOT/tests/131_continue_outside_while.my"
   "$ROOT/tests/133_for_cond_not_bool_para.my"
+  "$ROOT/tests/150_param_array_arg_scalar_fail.my"
+  "$ROOT/tests/151_param_array_rank_mismatch_fail.my"
+  "$ROOT/tests/152_return_array_disallowed.my"
+  "$ROOT/tests/163_slice_as_scalar_op_fail.my"
+  "$ROOT/tests/164_slice_assign_fail.my"
+  "$ROOT/tests/165_slice_rank_mismatch_fail.my"
 )
 
 pass=0

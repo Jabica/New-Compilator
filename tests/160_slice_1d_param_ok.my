@@ -1,0 +1,11 @@
+funcao soma(linha: inteiro[3]): inteiro {
+  retorna linha[0] + linha[1] + linha[2];
+}
+
+funcao main(): inteiro {
+  variavel m: inteiro[2][3];
+  m[0][0]=1; m[0][1]=2; m[0][2]=3; // soma=6
+  m[1][0]=4; m[1][1]=5; m[1][2]=6;
+  retorna soma(m[0]);
+}
+

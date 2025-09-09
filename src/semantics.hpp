@@ -864,6 +864,10 @@ private:
             if (!top.declare(p.name, p.type)){
                 diag.error(0,0, "variavel redeclarada: " + p.name);
             }
+            // R2-08: se parâmetro for array, injete dims no escopo
+            if (!p.arrayDims.empty()) {
+                top.setDimsHere(p.name, p.arrayDims);
+            }
             // Não marque parâmetros inteiros automaticamente como booleanos.
             // Uma variável só vira "boolLike" quando for claramente 0/1
             // (literal/const) ou receber um valor lógico em alguma atribuição.
@@ -989,21 +993,53 @@ private:
         for (size_t i=0;i<n;++i){
             Type ta = checkExpr(c->args[i].get(), scope);
             const Type& tp = sig.params[i];
-            // R2-08: se o formal for array (tem dims), exigir argumento array por VarRef com mesmo rank
+            // R2-08/R2-09: se o formal for array (tem dims)
             if (!sig.paramDims.empty() && i < sig.paramDims.size() && !sig.paramDims[i].empty()){
-                auto vr = dynamic_cast<VarRef*>(c->args[i].get());
-                if (!vr){
-                    diag.error(0,0, "argumento deve ser array passado por referencia no parametro " + std::to_string(i+1));
-                } else {
-                    auto dimsArg = scope.getDims(vr->name);
-                    if (dimsArg.empty()){
-                        diag.error(0,0, "argumento nao eh array no parametro " + std::to_string(i+1));
-                    } else if (dimsArg.size() != sig.paramDims[i].size()){
-                        diag.error(0,0, "rank de array incompatível no argumento " + std::to_string(i+1));
+                const auto& formalDims = sig.paramDims[i];
+                if (formalDims.size() == 1) {
+                    // Param 1D: aceitar
+                    // - VarRef de vetor 1D
+                    // - Slice 1D (resultado de indexacao parcial), que vira Type com arrayLen>0
+                    bool ok = false;
+                    // Caso VarRef: use dims do símbolo se houver
+                    if (auto vr = dynamic_cast<VarRef*>(c->args[i].get())) {
+                        auto dimsArg = scope.getDims(vr->name);
+                        if (!dimsArg.empty() && dimsArg.size() == 1) {
+                            ok = true;
+                            // opcional: checar comprimento
+                            if (formalDims[0] > 0 && dimsArg[0] != formalDims[0]) {
+                                diag.error(0,0, "comprimento de array 1D incompatível no argumento " + std::to_string(i+1));
+                            }
+                        }
                     }
+                    // Caso geral: aceite qualquer expr cujo tipo seja array 1D (ex.: slice m[i])
+                    if (!ok && ta.isArray()) {
+                        ok = true;
+                        if (formalDims[0] > 0 && ta.arrayLen > 0 && ta.arrayLen != formalDims[0]) {
+                            diag.error(0,0, "comprimento de array 1D incompatível no argumento " + std::to_string(i+1));
+                        }
+                    }
+                    if (!ok) {
+                        diag.error(0,0, "argumento 1D incompatível no parametro " + std::to_string(i+1));
+                    }
+                    // Skip scalar conversion checks for arrays
+                    continue;
+                } else {
+                    // Param ND (rank>=2): exigir VarRef com mesmo rank
+                    auto vr = dynamic_cast<VarRef*>(c->args[i].get());
+                    if (!vr){
+                        diag.error(0,0, "argumento deve ser array passado por referencia no parametro " + std::to_string(i+1));
+                    } else {
+                        auto dimsArg = scope.getDims(vr->name);
+                        if (dimsArg.empty()){
+                            diag.error(0,0, "argumento nao eh array no parametro " + std::to_string(i+1));
+                        } else if (dimsArg.size() != formalDims.size()){
+                            diag.error(0,0, "rank de array incompatível no argumento " + std::to_string(i+1));
+                        }
+                    }
+                    // Skip scalar conversion checks for arrays
+                    continue;
                 }
-                // Skip scalar conversion checks for arrays
-                continue;
             }
 
             // Regra para argumentos:
@@ -1040,7 +1076,7 @@ private:
         return sig.ret;
     }
 
-        // indexação a[i][j] ... (ND)
+        // indexação a[i][j] ... (ND) com suporte a slice 1D (m[i])
         if (auto ixTop = dynamic_cast<Index*>(e)){
             // achata cadeia
             std::vector<Expr*> idxExprs;
@@ -1064,24 +1100,34 @@ private:
                     diag.error(0,0, "indice de array deve ser inteiro");
                 }
             }
-            // checa dimensões
+            // checa dimensões e determina rank resultante
             std::vector<int> dims = scope.getDims(name);
-            if (dims.empty()) {
-                // se não há dims registradas, aceite 1D legado (var escalar não permite index)
+            size_t rank = dims.size();
+            if (rank == 0) {
                 const Type* tv = scope.lookup(name);
                 if (!tv || !tv->isArray()) {
                     diag.error(0,0, "indexacao em tipo nao-array");
+                    return Type::inteiro();
                 }
-            } else {
-                if (idxExprs.size() != dims.size()) {
-                    diag.error(0,0, "numero de indices diferente das dimensoes do array");
-                }
-            }
-            // tipo do elemento = base escalar
-            const Type* tv = scope.lookup(name);
-            if (tv) {
+                // Sem dims registradas: trate como 1D legado; exige exatamente um índice
+                if (idxExprs.size() != 1) diag.error(0,0, "numero de indices diferente das dimensoes do array");
                 Type base = *tv; base.arrayLen = 0; return base;
             }
+            if (idxExprs.size() == rank) {
+                // elemento escalar
+                const Type* tv = scope.lookup(name);
+                Type base = tv ? *tv : Type::inteiro();
+                base.arrayLen = 0;
+                return base;
+            }
+            if (idxExprs.size() + 1 == rank) {
+                // slice 1D: resultado é array 1D do último tamanho
+                Type res = Type::inteiro();
+                res.arrayLen = (int)dims.back();
+                return res;
+            }
+            // demais casos: erro de rank
+            diag.error(0,0, "numero de indices diferente das dimensoes do array");
             return Type::inteiro();
         }
 

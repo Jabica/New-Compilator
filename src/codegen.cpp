@@ -673,7 +673,7 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
     }
 
     if (auto idx = dynamic_cast<Index*>(e)) {
-        // ND: achata cadeia
+        // ND + slice 1D: achata cadeia
         auto pair = flattenIndexChain(e, scope);
         const std::string& name = pair.first;
         auto idxs = std::move(pair.second);
@@ -691,22 +691,37 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
             diag.error(0,0, "codegen: variavel escalar nao suporta indexacao");
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
-        if (idxs.size() != it->second.size()) {
-            diag.error(0,0, "codegen: numero de indices diferente das dimensoes do array");
-            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        size_t rank = it->second.size();
+        if (idxs.size() == rank) {
+            // elemento escalar
+            llvm::Value* off = linearizeOffset(it->second, idxs);
+            llvm::Value* elemPtr = nullptr;
+            if (S->isGlobal && S->isArray) {
+                auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                elemPtr = builder->CreateInBoundsGEP(
+                    llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                    S->ptr,
+                    {zero, off}, name + ".g.elem.ptr");
+            } else {
+                elemPtr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".elem.ptr");
+            }
+            return builder->CreateLoad(S->elemTy, elemPtr, name + ".elem");
         }
-        llvm::Value* off = linearizeOffset(it->second, idxs);
-        llvm::Value* elemPtr = nullptr;
-        if (S->isGlobal && S->isArray) {
-            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
-            elemPtr = builder->CreateInBoundsGEP(
-                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
-                S->ptr,
-                {zero, off}, name + ".g.elem.ptr");
-        } else {
-            elemPtr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".elem.ptr");
+        if (idxs.size() + 1 == rank) {
+            // slice 1D: retorna i32* base da linha (sem load)
+            llvm::Value* off = linearizeOffset(it->second, idxs);
+            if (S->isGlobal && S->isArray) {
+                auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                return builder->CreateInBoundsGEP(
+                    llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                    S->ptr,
+                    {zero, off}, name + ".g.row.ptr");
+            } else {
+                return builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".row.ptr");
+            }
         }
-        return builder->CreateLoad(S->elemTy, elemPtr, name + ".elem");
+        diag.error(0,0, "codegen: numero de indices diferente das dimensoes do array");
+        return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
     }
 
     return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);

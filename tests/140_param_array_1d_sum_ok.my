@@ -1,0 +1,16 @@
+funcao soma(a: inteiro[4]): inteiro {
+  variavel s: inteiro = 0;
+  variavel i: inteiro = 0;
+  enquanto (i < 4) {
+    s = s + a[i];
+    i = i + 1;
+  }
+  retorna s;
+}
+
+funcao main(): inteiro {
+  variavel v: inteiro[4];
+  v[0]=1; v[1]=2; v[2]=3; v[3]=4;
+  retorna soma(v); // 10
+}
+
