@@ -30,6 +30,7 @@ void Codegen::emitGlobals(Program* p) {
         VarDecl* g = gptr.get();
         llvm::Type* elemTy = ty(g->type.elem());
         if (g->arrayLen > 0) {
+            if (!g->arrayDims.empty()) arrayDimsByName[g->name] = g->arrayDims;
             auto* arrTy = llvm::ArrayType::get(elemTy, (uint64_t)g->arrayLen);
             llvm::Constant* initC = nullptr;
             if (!g->constInitList.empty()) {
@@ -254,7 +255,13 @@ llvm::Value* Codegen::emitUBDivCheck(llvm::Value* denom, const SourceLoc& loc) {
 Function* Codegen::emitFuncDecl(FuncDecl* f) {
     std::vector<llvm::Type*> params;
     params.reserve(f->params.size());
-    for (auto& p : f->params) params.push_back(ty(p.type));
+    for (auto& p : f->params) {
+        llvm::Type* PT = ty(p.type);
+        if (!p.arrayDims.empty()) {
+            PT = llvm::PointerType::get(ctx, 0); // array param -> opaque ptr
+        }
+        params.push_back(PT);
+    }
     llvm::ArrayRef<llvm::Type*> paramRef(params);
     llvm::FunctionType* FT = llvm::FunctionType::get(ty(f->ret), paramRef, /*isVarArg=*/false);
     Function* F = Function::Create(FT, Function::ExternalLinkage, f->name, mod.get());
@@ -321,10 +328,23 @@ void Codegen::emitFuncBody(FuncDecl* f) {
     for (auto& kv : globalSlots) {
         scope.declare(kv.first, kv.second.ptr, kv.second.elemTy, /*isGlob=*/true, kv.second.isArray, kv.second.arrayLen);
     }
-    for (auto& arg : F->args()) {
-        auto* A = createEntryAlloca(F, arg.getType(), std::string(arg.getName()));
-        builder->CreateStore(&arg, A);
-        scope.declare(std::string(arg.getName()), A, arg.getType(), /*isGlob=*/false, /*isArr=*/false, 0);
+    {
+        unsigned i=0;
+        for (auto& arg : F->args()) {
+            std::string pname = std::string(arg.getName());
+            const Param& P = f->params[i];
+            if (!P.arrayDims.empty()) {
+                // param array: registre ponteiro base diretamente e dims
+                llvm::Type* elemTy = ty(P.type);
+                scope.declare(pname, &arg, elemTy, /*isGlob=*/false, /*isArr=*/true, 0);
+                arrayDimsByName[pname] = P.arrayDims;
+            } else {
+                auto* A = createEntryAlloca(F, arg.getType(), pname);
+                builder->CreateStore(&arg, A);
+                scope.declare(pname, A, arg.getType(), /*isGlob=*/false, /*isArr=*/false, 0);
+            }
+            ++i;
+        }
     }
 
     emitBlock(f->body.get(), scope);
@@ -369,10 +389,12 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
         AllocaInst* A = nullptr;
         if (v->arrayLen > 0) {
-            // aloca "arrayLen" inteiros na pilha: alloca i32, i32 arrayLen
-            auto* lenVal = ConstantInt::get(llvm::Type::getInt32Ty(ctx), v->arrayLen);
+            // ND: aloca totalSize() elementos contíguos
+            int total = v->arrayLen;
+            auto* lenVal = ConstantInt::get(llvm::Type::getInt32Ty(ctx), total);
             IRBuilder<> tmp(&F->getEntryBlock(), F->getEntryBlock().begin());
             A = tmp.CreateAlloca(baseTy, lenVal, v->name); // tipo alocado = i32, resultado = i32*
+            if (!v->arrayDims.empty()) arrayDimsByName[v->name] = v->arrayDims;
         } else {
             A = createEntryAlloca(F, baseTy, v->name);     // escalar: alloca i32
         }
@@ -426,49 +448,49 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
 
     if (auto ai = dynamic_cast<AssignIndex*>(s)) {
         setLoc(ai->loc);
-        // base deve ser VarRef (suporte 1D)
-        auto* baseRef = dynamic_cast<VarRef*>(ai->base.get());
-        if (!baseRef) {
-            diag.error(0,0,"codegen: atribuicao indexada com base nao suportada");
-            (void)emitExpr(ai->value.get(), scope);
-            return;
-        }
-        VarSlot* S = scope.lookup(baseRef->name);
-        if (!S) {
-            diag.error(0,0,"codegen: variavel nao declarada: " + baseRef->name);
-            (void)emitExpr(ai->value.get(), scope);
-            return;
-        }
-
-        // calcula índice
-        Value* idxV = emitExpr(ai->index.get(), scope);
-        if (!idxV->getType()->isIntegerTy(32)) {
-            idxV = builder->CreateZExtOrTrunc(idxV, llvm::Type::getInt32Ty(ctx));
-        }
-
-        // Bounds check (Patch 14) when ASan-like checks are enabled
+        auto p = flattenIndexChain(ai->base.get(), scope);
+        const std::string& name = p.first;
+        auto idxs = std::move(p.second);
+        if (name.empty()) { diag.error(0,0, "codegen: atribuicao indexada invalida"); (void)emitExpr(ai->value.get(), scope); return; }
+        VarSlot* S = scope.lookup(name);
+        if (!S) { diag.error(0,0, std::string("codegen: variavel nao declarada: ") + name); (void)emitExpr(ai->value.get(), scope); return; }
+        Value* last = emitExpr(ai->index.get(), scope);
+        if (!last->getType()->isIntegerTy(32)) last = builder->CreateZExtOrTrunc(last, llvm::Type::getInt32Ty(ctx));
+        idxs.push_back(last);
+        auto it = arrayDimsByName.find(name);
+        if (it == arrayDimsByName.end()) { diag.error(0,0, "codegen: variavel escalar nao suporta indexacao"); (void)emitExpr(ai->value.get(), scope); return; }
+        if (idxs.size() != it->second.size()) { diag.error(0,0, "codegen: numero de indices diferente das dimensoes do array"); (void)emitExpr(ai->value.get(), scope); return; }
+        llvm::Value* off = linearizeOffset(it->second, idxs);
+        // Optional ASan-like OOB check (educational)
         if (asan) {
-            int len = (int)S->arrayLen;
-            if (len > 0) {
-                auto* i32 = llvm::Type::getInt32Ty(ctx);
+            auto* i32 = llvm::Type::getInt32Ty(ctx);
+            // off is i32; compute bounds using known total length
+            int totalLen = 0;
+            auto itLen = arrayDimsByName.find(name);
+            if (itLen != arrayDimsByName.end()) {
+                long long acc = 1; for (int d : itLen->second) acc *= d; totalLen = (int)acc;
+            } else if (S->isArray) {
+                totalLen = (int)S->arrayLen;
+            }
+            if (totalLen > 0) {
                 llvm::Value* zero = llvm::ConstantInt::get(i32, 0);
-                llvm::Value* lenV = llvm::ConstantInt::get(i32, len);
-                llvm::Value* lt0 = builder->CreateICmpSLT(idxV, zero, "oob.lt0");
-                llvm::Value* geLen = builder->CreateICmpSGE(idxV, lenV, "oob.gelen");
-                llvm::Value* oob = builder->CreateOr(lt0, geLen, "oob");
+                llvm::Value* lenV = llvm::ConstantInt::get(i32, totalLen);
+                llvm::Value* lt0  = builder->CreateICmpSLT(off, zero, "oob.lt0");
+                llvm::Value* geN  = builder->CreateICmpSGE(off, lenV, "oob.geN");
+                llvm::Value* oob  = builder->CreateOr(lt0, geN, "oob");
 
                 llvm::Function* Fun = builder->GetInsertBlock()->getParent();
-                auto* okBB = llvm::BasicBlock::Create(ctx, "idx.ok");
+                auto* okBB  = llvm::BasicBlock::Create(ctx, "idx.ok");
                 auto* errBB = llvm::BasicBlock::Create(ctx, "idx.err");
                 builder->CreateCondBr(oob, errBB, okBB);
 
-                // errBB: print and exit
+                // errBB
                 Fun->insert(Fun->end(), errBB);
                 builder->SetInsertPoint(errBB);
                 if (debug && ai->loc.valid() && curScope) builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, ai->loc.line, ai->loc.col, curScope));
                 llvm::Function* putsFn = mod->getFunction("puts");
                 if (!putsFn) {
-                    auto* putsTy = llvm::FunctionType::get(i32, { llvm::PointerType::get(ctx, 0) }, false);
+                    auto* putsTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), { llvm::PointerType::get(ctx, 0) }, false);
                     putsFn = llvm::Function::Create(putsTy, llvm::Function::ExternalLinkage, "puts", mod.get());
                 }
                 llvm::Function* exitFn = mod->getFunction("exit");
@@ -488,31 +510,20 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
             }
         }
 
-        // ponteiro para o elemento
         llvm::Value* elemPtr = nullptr;
         if (S->isGlobal && S->isArray) {
             auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             elemPtr = builder->CreateInBoundsGEP(
                 llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
                 S->ptr,
-                {zero, idxV},
-                baseRef->name + ".g.elem.ptr");
+                {zero, off}, name + ".g.elem.ptr");
         } else {
-            elemPtr = builder->CreateInBoundsGEP(
-                S->elemTy,
-                S->ptr,
-                idxV,
-                baseRef->name + ".elem.ptr");
+            elemPtr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".elem.ptr");
         }
-
-        // valor a gravar
         Value* val = emitExpr(ai->value.get(), scope);
         llvm::Type* elemTy = S->elemTy;
-        if (elemTy->isIntegerTy(1)) {
-            val = toBool(val);
-        } else if (elemTy->isIntegerTy(32)) {
-            val = toInt32(val);
-        }
+        if (elemTy->isIntegerTy(1)) val = toBool(val);
+        else if (elemTy->isIntegerTy(32)) val = toInt32(val);
         builder->CreateStore(val, elemPtr);
         return;
     }
@@ -621,9 +632,35 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
         argsV.reserve(c->args.size());
         auto* FT = callee->getFunctionType();
         for (size_t i = 0; i < c->args.size(); ++i) {
-            llvm::Value* v = emitExpr(c->args[i].get(), scope);
-            if (i < FT->getNumParams()) {
-                v = castForParam(v, FT->getParamType((unsigned)i));
+            llvm::Type* PT = (i < FT->getNumParams()) ? FT->getParamType((unsigned)i) : nullptr;
+            llvm::Value* v = nullptr;
+            if (PT && PT->isPointerTy()) {
+                // Callee espera ponteiro (param array). Decay argumento se for VarRef de array.
+                if (auto vr = dynamic_cast<VarRef*>(c->args[i].get())) {
+                    VarSlot* S = scope.lookup(vr->name);
+                    if (!S) { diag.error(0,0, "codegen: variavel nao declarada: "+vr->name); v = ConstantInt::get(llvm::Type::getInt32Ty(ctx),0); }
+                    else {
+                        llvm::Value* basePtr = nullptr;
+                        // S->ptr pode ser i32* (local array) ou argumento i32* (param array)
+                        basePtr = S->ptr;
+                        // Globais: S->ptr é GlobalVariable do array; precise GEP [0,0]
+                        if (S->isGlobal && S->isArray) {
+                            auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                            basePtr = builder->CreateInBoundsGEP(
+                                llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
+                                S->ptr,
+                                std::array<llvm::Value*,2>{zero, zero},
+                                vr->name + ".g.base");
+                        }
+                        v = basePtr;
+                    }
+                } else {
+                    // fallback: avalia e espera que semântica tenha barrado
+                    v = emitExpr(c->args[i].get(), scope);
+                }
+            } else {
+                v = emitExpr(c->args[i].get(), scope);
+                if (PT) v = castForParam(v, PT);
             }
             argsV.push_back(v);
         }
@@ -636,33 +673,40 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
     }
 
     if (auto idx = dynamic_cast<Index*>(e)) {
-        // suporte 1D: base deve ser VarRef
-        auto* baseRef = dynamic_cast<VarRef*>(idx->base.get());
-        if (!baseRef) {
-            diag.error(0,0,"codegen: indexacao com base nao suportada");
+        // ND: achata cadeia
+        auto pair = flattenIndexChain(e, scope);
+        const std::string& name = pair.first;
+        auto idxs = std::move(pair.second);
+        if (name.empty() || idxs.empty()) {
+            diag.error(0,0, "codegen: indexacao invalida");
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
-        VarSlot* S = scope.lookup(baseRef->name);
+        VarSlot* S = scope.lookup(name);
         if (!S) {
-            diag.error(0,0,"codegen: variavel nao declarada: " + baseRef->name);
+            diag.error(0,0, std::string("codegen: variavel nao declarada: ") + name);
             return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
-        Value* idxV = emitExpr(idx->idx.get(), scope);
-        if (!idxV->getType()->isIntegerTy(32)) {
-            idxV = builder->CreateZExtOrTrunc(idxV, llvm::Type::getInt32Ty(ctx));
+        auto it = arrayDimsByName.find(name);
+        if (it == arrayDimsByName.end()) {
+            diag.error(0,0, "codegen: variavel escalar nao suporta indexacao");
+            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
         }
+        if (idxs.size() != it->second.size()) {
+            diag.error(0,0, "codegen: numero de indices diferente das dimensoes do array");
+            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        }
+        llvm::Value* off = linearizeOffset(it->second, idxs);
         llvm::Value* elemPtr = nullptr;
         if (S->isGlobal && S->isArray) {
             auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             elemPtr = builder->CreateInBoundsGEP(
                 llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
                 S->ptr,
-                {zero, idxV}, baseRef->name + ".g.elem.ptr");
+                {zero, off}, name + ".g.elem.ptr");
         } else {
-            elemPtr = builder->CreateInBoundsGEP(
-                S->elemTy, S->ptr, idxV, baseRef->name + ".elem.ptr");
+            elemPtr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".elem.ptr");
         }
-        return builder->CreateLoad(S->elemTy, elemPtr, baseRef->name + ".elem");
+        return builder->CreateLoad(S->elemTy, elemPtr, name + ".elem");
     }
 
     return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
@@ -796,6 +840,40 @@ void Codegen::emitIf(IfStmt* s, Scope& scope) {
 
     F->insert(F->end(), mergeBB);
     builder->SetInsertPoint(mergeBB);
+}
+
+// R2-07 helpers
+std::pair<std::string, std::vector<llvm::Value*>>
+Codegen::flattenIndexChain(Expr* e, Scope& scope) {
+    std::vector<llvm::Value*> idxs;
+    Expr* cur = e;
+    std::string name;
+    while (auto ix = dynamic_cast<Index*>(cur)) {
+        llvm::Value* iv = emitExpr(ix->idx.get(), scope);
+        if (!iv->getType()->isIntegerTy(32)) iv = builder->CreateZExtOrTrunc(iv, llvm::Type::getInt32Ty(ctx));
+        idxs.push_back(iv);
+        cur = ix->base.get();
+    }
+    if (auto vr = dynamic_cast<VarRef*>(cur)) {
+        name = vr->name;
+        std::reverse(idxs.begin(), idxs.end());
+    }
+    return {name, std::move(idxs)};
+}
+
+llvm::Value* Codegen::linearizeOffset(const std::vector<int>& dims,
+                                      const std::vector<llvm::Value*>& idxs) {
+    auto* i32 = llvm::Type::getInt32Ty(ctx);
+    llvm::Value* off = llvm::ConstantInt::get(i32, 0);
+    if (dims.empty()) return off;
+    std::vector<int> stride(dims.size(), 1);
+    for (int d = (int)dims.size()-2; d>=0; --d) stride[d] = stride[d+1]*dims[d+1];
+    for (size_t n=0;n<idxs.size();++n) {
+        llvm::Value* term = idxs[n];
+        if (n < stride.size() && stride[n] != 1) term = builder->CreateMul(term, llvm::ConstantInt::get(i32, stride[n]));
+        off = builder->CreateAdd(off, term);
+    }
+    return off;
 }
 
 void Codegen::emitWhile(WhileStmt* s, Scope& scope) {

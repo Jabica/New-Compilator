@@ -60,17 +60,18 @@ std::unique_ptr<VarDecl> Parser::parseGlobalDecl(){
 
     Token nameTok = expect(TokenKind::Identifier, "identificador");
 
-    // opcional: [expr]
-    std::unique_ptr<Expr> arrExpr;
-    if (match(TokenKind::LBracket)) {
-        arrExpr = parseExpr();
+    // opcional: [expr] [expr] ... (ND)
+    std::vector<std::unique_ptr<Expr>> arrExprs;
+    while (match(TokenKind::LBracket)) {
+        auto ex = parseExpr();
         expect(TokenKind::RBracket, "]");
+        arrExprs.push_back(std::move(ex));
     }
     ty.arrayLen = 0;
 
     std::unique_ptr<Expr> init;
     std::vector<std::unique_ptr<Expr>> initList;
-    bool isArrayDecl = (arrExpr != nullptr);
+    bool isArrayDecl = (!arrExprs.empty());
     if (isArrayDecl) {
         if (match(TokenKind::Assign)) {
             // lista: { expr (, expr)* }
@@ -93,7 +94,7 @@ std::unique_ptr<VarDecl> Parser::parseGlobalDecl(){
     auto v = std::make_unique<VarDecl>(nameTok.lexeme, ty, ty.arrayLen, std::move(init), LFrom(nameTok, filename));
     v->isConst = isConst;
     v->initList = std::move(initList);
-    v->arrayLenExpr = std::move(arrExpr);
+    v->arrayDimsExpr = std::move(arrExprs);
     return v;
 }
 
@@ -137,7 +138,9 @@ std::vector<Param> Parser::parseParamsOpt(){
         auto nameTok = expect(TokenKind::Identifier, "nome do parametro");
         expect(TokenKind::Colon, ":");
         Param p; p.name = nameTok.lexeme; p.type = parseType();
-        ps.push_back(p);
+        // R2-08: coletar dims ND do param (se houver)
+        p.arrayDimsExpr = takePendingArrayLenList();
+        ps.push_back(std::move(p));
         if (!match(TokenKind::Comma)) break;
     }
     return ps;
@@ -154,9 +157,10 @@ Type Parser::parseType(){
         return Type::inteiro();
     }
 
-    // zera e consome sufixos [INT] [INT] ...
+    // zera e consome sufixos [expr] [expr] ... (ND)
     pendingArrayLen = 0;
     pendingArrayLenExpr.reset();
+    pendingArrayLenList.clear();
     while (peek().kind == TokenKind::LBracket) {
         pos++; // '['
         if (peek().kind == TokenKind::KwVerdadeiro || peek().kind == TokenKind::KwFalso) {
@@ -164,7 +168,7 @@ Type Parser::parseType(){
         }
         auto e = parseExpr();
         expect(TokenKind::RBracket, "]");
-        pendingArrayLenExpr = std::move(e); // 1D: sobrescreve se repetido
+        pendingArrayLenList.push_back(std::move(e));
     }
 
     // Não aplica em Type aqui; a semântica resolverá e preencherá VarDecl::arrayLen e type.arrayLen
@@ -203,7 +207,7 @@ std::unique_ptr<Stmt> Parser::parseStmt(){
         }
         expect(TokenKind::Semicolon, ";");
         auto v = std::make_unique<VarDecl>(nameTok.lexeme, ty, ty.arrayLen, std::move(init), LFrom(nameTok, filename));
-        v->arrayLenExpr = takePendingArrayLenExpr();
+        v->arrayDimsExpr = takePendingArrayLenList();
         return v;
     }
 

@@ -145,8 +145,10 @@ struct Index : Expr {
 struct VarDecl : Stmt {
     std::string name;
     Type type;
-    int arrayLen = 0;                 // <-- NOVO: 0 = escalar; >0 = tamanho do vetor
-    std::unique_ptr<Expr> arrayLenExpr; // Patch 18: expr de tamanho (const-expr)
+    int arrayLen = 0;                 // 0 = escalar; >0 = tamanho total (para ND, produto das dimensões)
+    std::unique_ptr<Expr> arrayLenExpr; // Patch 18: expr de tamanho (const-expr, legado 1D)
+    std::vector<int> arrayDims;                 // R2-07: dimensões (vazia => escalar)
+    std::vector<std::unique_ptr<Expr>> arrayDimsExpr; // R2-07: exprs das dimensões (const-expr)
     std::unique_ptr<Expr> init;       // opcional
     bool isConst = false;             // Patch 16: apenas globais neste patch
     std::vector<std::unique_ptr<Expr>> initList; // Patch 16: lista para vetores globais
@@ -160,7 +162,11 @@ struct VarDecl : Stmt {
     void dump(std::ostream& os, int d=0) const override {
         indent(os,d);
         os<<"VarDecl "<<name<<": "<<type.str();
-        if (arrayLen > 0) os<<"["<<arrayLen<<"]";
+        if (!arrayDims.empty()) {
+            os<<"[";
+            for (size_t i=0;i<arrayDims.size();++i){ os<<arrayDims[i]; if (i+1<arrayDims.size()) os<<","; }
+            os<<"]";
+        } else if (arrayLen > 0) os<<"["<<arrayLen<<"]";
         if (isConst) os<<" const";
         os<<"\n";
         if (init){ indent(os,d+1); os<<"init:\n"; init->dump(os,d+2); }
@@ -325,7 +331,13 @@ struct SwitchStmt : Stmt {
 };
 
 // ===== FUNÇÕES / PROGRAMA =====
-struct Param { std::string name; Type type; };
+struct Param {
+    std::string name;
+    Type type;
+    std::vector<int> arrayDims;                       // R2-08: dims resolvidas
+    std::vector<std::unique_ptr<Expr>> arrayDimsExpr; // R2-08: exprs das dims (const-expr)
+    bool isArray() const { return !arrayDims.empty(); }
+};
 
 struct FuncDecl : Node {
     std::string name;

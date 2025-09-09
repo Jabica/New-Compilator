@@ -85,6 +85,10 @@ private:
     llvm::Value* emitUnary (Unary* u, Scope& scope);
     llvm::Value* emitBinary(Binary* b, Scope& scope);
     llvm::Value* emitStringLiteral(const std::string& s);
+    // R2-07: helpers para ND
+    std::pair<std::string, std::vector<llvm::Value*>> flattenIndexChain(Expr* e, Scope& scope);
+    llvm::Value* linearizeOffset(const std::vector<int>& dims,
+                                 const std::vector<llvm::Value*>& idxs);
 
     // ---- Debug info ----
     void setLoc(const SourceLoc& L);
@@ -110,6 +114,9 @@ private:
     std::vector<llvm::BasicBlock*> fallthroughTargets; // topo: proximo case/default
     // R2-04: destino de 'continue'
     std::vector<llvm::BasicBlock*> continueTargets;    // topo: volta para cond
+
+    // R2-07: dimensões por variável (globais/locais)
+    std::unordered_map<std::string, std::vector<int>> arrayDimsByName;
 };
 
 } // namespace mycc
