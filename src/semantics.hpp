@@ -996,50 +996,67 @@ private:
             // R2-08/R2-09: se o formal for array (tem dims)
             if (!sig.paramDims.empty() && i < sig.paramDims.size() && !sig.paramDims[i].empty()){
                 const auto& formalDims = sig.paramDims[i];
-                if (formalDims.size() == 1) {
-                    // Param 1D: aceitar
-                    // - VarRef de vetor 1D
-                    // - Slice 1D (resultado de indexacao parcial), que vira Type com arrayLen>0
-                    bool ok = false;
-                    // Caso VarRef: use dims do símbolo se houver
-                    if (auto vr = dynamic_cast<VarRef*>(c->args[i].get())) {
-                        auto dimsArg = scope.getDims(vr->name);
-                        if (!dimsArg.empty() && dimsArg.size() == 1) {
-                            ok = true;
-                            // opcional: checar comprimento
-                            if (formalDims[0] > 0 && dimsArg[0] != formalDims[0]) {
-                                diag.error(0,0, "comprimento de array 1D incompatível no argumento " + std::to_string(i+1));
+                const size_t K = formalDims.size();
+
+                auto checkDimsSuffix = [&](const std::vector<int>& baseDims, size_t kFix){
+                    if (kFix > baseDims.size()) return; // outra checagem já reportará
+                    if (formalDims.size() == baseDims.size() - kFix) {
+                        for (size_t t=0;t<formalDims.size();++t){
+                            if (formalDims[t] > 0 && (size_t)(kFix+t) < baseDims.size() && formalDims[t] != baseDims[kFix+t]){
+                                diag.error(0,0, "dimensoes incompativeis no argumento " + std::to_string(i+1));
+                                break;
                             }
                         }
                     }
-                    // Caso geral: aceite qualquer expr cujo tipo seja array 1D (ex.: slice m[i])
-                    if (!ok && ta.isArray()) {
-                        ok = true;
-                        if (formalDims[0] > 0 && ta.arrayLen > 0 && ta.arrayLen != formalDims[0]) {
-                            diag.error(0,0, "comprimento de array 1D incompatível no argumento " + std::to_string(i+1));
-                        }
-                    }
-                    if (!ok) {
-                        diag.error(0,0, "argumento 1D incompatível no parametro " + std::to_string(i+1));
-                    }
-                    // Skip scalar conversion checks for arrays
-                    continue;
-                } else {
-                    // Param ND (rank>=2): exigir VarRef com mesmo rank
-                    auto vr = dynamic_cast<VarRef*>(c->args[i].get());
-                    if (!vr){
-                        diag.error(0,0, "argumento deve ser array passado por referencia no parametro " + std::to_string(i+1));
+                };
+
+                bool handled = false;
+                // Caso 1: VarRef
+                if (auto vr = dynamic_cast<VarRef*>(c->args[i].get())) {
+                    auto dimsArg = scope.getDims(vr->name);
+                    if (dimsArg.empty()){
+                        diag.error(0,0, "argumento nao eh array no parametro " + std::to_string(i+1));
+                    } else if (dimsArg.size() != K) {
+                        diag.error(0,0, "rank de array incompatível no argumento " + std::to_string(i+1));
                     } else {
-                        auto dimsArg = scope.getDims(vr->name);
-                        if (dimsArg.empty()){
-                            diag.error(0,0, "argumento nao eh array no parametro " + std::to_string(i+1));
-                        } else if (dimsArg.size() != formalDims.size()){
-                            diag.error(0,0, "rank de array incompatível no argumento " + std::to_string(i+1));
-                        }
+                        checkDimsSuffix(dimsArg, 0);
                     }
-                    // Skip scalar conversion checks for arrays
-                    continue;
+                    handled = true;
                 }
+                // Caso 2: Slice (cadeia de Index sobre VarRef)
+                if (!handled) {
+                    std::vector<Expr*> idxExprs2;
+                    Expr* cur2 = c->args[i].get();
+                    while (auto ix = dynamic_cast<Index*>(cur2)) { idxExprs2.push_back(ix->idx.get()); cur2 = ix->base.get(); }
+                    if (auto vr2 = dynamic_cast<VarRef*>(cur2)) {
+                        auto baseDims = scope.getDims(vr2->name);
+                        if (baseDims.empty()) {
+                            diag.error(0,0, "argumento nao eh array no parametro " + std::to_string(i+1));
+                        } else {
+                            size_t R = baseDims.size();
+                            size_t kfix = idxExprs2.size();
+                            if (kfix > R) {
+                                diag.error(0,0, "indices em excesso no argumento " + std::to_string(i+1));
+                            } else {
+                                size_t rankView = R - kfix;
+                                if (rankView != K) {
+                                    diag.error(0,0, "rank de array incompatível no argumento " + std::to_string(i+1));
+                                } else {
+                                    checkDimsSuffix(baseDims, kfix);
+                                }
+                            }
+                        }
+                        handled = true;
+                    }
+                }
+                if (!handled) {
+                    // último recurso: se o tipo já veio como array, aceite somente se K==1 (legado)
+                    if (!(ta.isArray() && K==1)) {
+                        diag.error(0,0, "argumento invalido para parametro array no argumento " + std::to_string(i+1));
+                    }
+                }
+                // Skip scalar conversion checks for arrays
+                continue;
             }
 
             // Regra para argumentos:
@@ -1076,7 +1093,7 @@ private:
         return sig.ret;
     }
 
-        // indexação a[i][j] ... (ND) com suporte a slice 1D (m[i])
+        // indexação a[i][j] ... (ND) com suporte a under-indexing geral (slices contíguos)
         if (auto ixTop = dynamic_cast<Index*>(e)){
             // achata cadeia
             std::vector<Expr*> idxExprs;
@@ -1113,6 +1130,10 @@ private:
                 if (idxExprs.size() != 1) diag.error(0,0, "numero de indices diferente das dimensoes do array");
                 Type base = *tv; base.arrayLen = 0; return base;
             }
+            if (idxExprs.size() > rank) {
+                diag.error(0,0, "indices em excesso para este array");
+                return Type::inteiro();
+            }
             if (idxExprs.size() == rank) {
                 // elemento escalar
                 const Type* tv = scope.lookup(name);
@@ -1120,15 +1141,13 @@ private:
                 base.arrayLen = 0;
                 return base;
             }
-            if (idxExprs.size() + 1 == rank) {
-                // slice 1D: resultado é array 1D do último tamanho
-                Type res = Type::inteiro();
-                res.arrayLen = (int)dims.back();
-                return res;
-            }
-            // demais casos: erro de rank
-            diag.error(0,0, "numero de indices diferente das dimensoes do array");
-            return Type::inteiro();
+            // idxExprs.size() < rank: under-indexing -> view ND contíguo
+            // Representamos como array 1D com tamanho igual ao produto das dimensões remanescentes
+            long long prod = 1;
+            for (size_t d = idxExprs.size(); d < rank; ++d) prod *= dims[d];
+            Type res = Type::inteiro();
+            res.arrayLen = (int)prod;
+            return res;
         }
 
         // fallback

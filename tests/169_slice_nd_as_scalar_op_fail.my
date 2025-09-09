@@ -1,0 +1,6 @@
+funcao main(): inteiro {
+  variavel a: inteiro[2][3][4];
+  // view 2D nao pode participar de soma com escalar
+  retorna a[0] + 1;
+}
+

@@ -707,20 +707,20 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
             }
             return builder->CreateLoad(S->elemTy, elemPtr, name + ".elem");
         }
-        if (idxs.size() + 1 == rank) {
-            // slice 1D: retorna i32* base da linha (sem load)
+        if (idxs.size() < rank) {
+            // slice ND: retorna i32* para o inicio do sub-array (sem load)
             llvm::Value* off = linearizeOffset(it->second, idxs);
             if (S->isGlobal && S->isArray) {
                 auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
                 return builder->CreateInBoundsGEP(
                     llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(),
                     S->ptr,
-                    {zero, off}, name + ".g.row.ptr");
+                    {zero, off}, name + ".g.slice.ptr");
             } else {
-                return builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".row.ptr");
+                return builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".slice.ptr");
             }
         }
-        diag.error(0,0, "codegen: numero de indices diferente das dimensoes do array");
+        diag.error(0,0, "codegen: indices em excesso para este array");
         return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
     }
 

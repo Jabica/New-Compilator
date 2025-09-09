@@ -71,6 +71,9 @@ MUST_PASS=(
   "$ROOT/tests/160_slice_1d_param_ok.my"
   "$ROOT/tests/161_slice_chain_ok.my"
   "$ROOT/tests/162_slice_index_ok.my"
+  "$ROOT/tests/166_slice_3d_2d_ok.my"
+  "$ROOT/tests/167_slice_3d_to_1d_ok.my"
+  "$ROOT/tests/168_slice_chain_scalar_ok.my"
 
 )
 MUST_FAIL=(
@@ -129,6 +132,9 @@ MUST_FAIL=(
   "$ROOT/tests/163_slice_as_scalar_op_fail.my"
   "$ROOT/tests/164_slice_assign_fail.my"
   "$ROOT/tests/165_slice_rank_mismatch_fail.my"
+  "$ROOT/tests/169_slice_nd_as_scalar_op_fail.my"
+  "$ROOT/tests/170_slice_rank_mismatch_fail.my"
+  "$ROOT/tests/171_slice_assign_nd_fail.my"
 )
 
 pass=0
