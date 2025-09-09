@@ -1,7 +1,7 @@
 {
 	"InstallScripts" : 
 	[
-		"/Users/jabour/VSCODE/New Compilator/build/cmake_install.cmake"
+		"/Users/jabour/Visual/New-Compilator/build/cmake_install.cmake"
 	],
 	"Parallel" : false
 }

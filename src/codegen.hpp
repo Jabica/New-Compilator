@@ -10,16 +10,21 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/DIBuilder.h>
 
 namespace mycc {
 
 class Codegen {
 public:
-    Codegen(std::string moduleName, Diag& d);
+    Codegen(std::string moduleName, Diag& d, bool enableDebug = false, const std::string& srcPath = "");
     // Gera IR para um Programa. Retorna ponteiro para Module pronto.
     std::unique_ptr<llvm::Module> run(Program* prog);
 
 private:
+    void seedBuiltins();
+    void setupDebug(const std::string& moduleName, const std::string& srcPath);
+    llvm::DISubprogram* createDISubprogram(FuncDecl* f, llvm::Function* F);
+
     Diag& diag;
     llvm::LLVMContext ctx;
     std::unique_ptr<llvm::Module>      mod;
@@ -43,7 +48,7 @@ private:
     };
 
     // ---- Helpers/infra ----
-    void              seedBuiltins(); // declarações das funções auxiliares (se usadas no projeto)
+    // declarações das funções auxiliares (se usadas no projeto)
     llvm::Type*       ty(const Type& t);
     llvm::Function*   emitFuncDecl(FuncDecl* f);
     llvm::AllocaInst* createEntryAlloca(llvm::Function* F, llvm::Type* T, const std::string& name);
@@ -65,6 +70,15 @@ private:
     llvm::Value* emitExpr  (Expr* e, Scope& scope);
     llvm::Value* emitUnary (Unary* u, Scope& scope);
     llvm::Value* emitBinary(Binary* b, Scope& scope);
+
+    // ---- Debug info ----
+    bool debug = false;
+    std::unique_ptr<llvm::DIBuilder> dib;
+    llvm::DICompileUnit* cu = nullptr;
+    llvm::DIFile* difile = nullptr;
+    llvm::DIType* diI32 = nullptr;
+    llvm::DIType* diI1  = nullptr;
+    llvm::DIType* diVoid= nullptr;
 };
 
 } // namespace mycc

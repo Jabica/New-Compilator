@@ -38,6 +38,8 @@ add_library(mycc STATIC
 )
 add_library(mycc_runtime STATIC src/runtime.c)
 set_target_properties(mycc_runtime PROPERTIES LINKER_LANGUAGE C OUTPUT_NAME "mycc_runtime")
+# caminho padrão do runtime, embutido no binário (usado como default do --rt)
+target_compile_definitions(mycc PRIVATE MYCC_DEFAULT_RT_PATH="${CMAKE_BINARY_DIR}/libmycc_runtime.a")
 # Exponha os headers públicos a quem linkar com a lib
 # (coloque TODOS os .hpp públicos em include/, não em src/)
 target_include_directories(mycc

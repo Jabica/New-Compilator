@@ -344,4 +344,16 @@ if [[ -x "$ROOT/scripts/run_target_tests.sh" ]]; then
   "$ROOT/scripts/run_target_tests.sh" || true
 fi
 
+# --- Smoke bitcode/assembly ---
+if [[ -x "$ROOT/scripts/run_bc_asm_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_bc_asm_tests.sh" || true
+fi
+
+# --- Smoke debug info ---
+if [[ -x "$ROOT/scripts/run_debug_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_debug_tests.sh" || true
+fi
+
 [[ $fail -eq 0 ]] || exit 1

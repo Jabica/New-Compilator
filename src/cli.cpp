@@ -25,9 +25,19 @@
 #include <llvm/TargetParser/Host.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/IR/LegacyPassManager.h>
+// Debug info support
+#include <llvm/IR/DIBuilder.h>
+// Extra headers for optimization utilities (Patch 11)
+#include <llvm/Transforms/Scalar/LoopPassManager.h>
+#include <llvm/Transforms/IPO/InferFunctionAttrs.h>
 
 namespace mycc {
 namespace cli {
+
+// Patch 11: global flag to control printing of optimization pipeline
+static bool gPrintPipeline = false;
+// Patch 12: global flag to enable debug info generation
+static bool debugEnabled = false;
 
 static std::string readFile(const std::string& path) {
     std::ifstream ifs(path);
@@ -55,6 +65,7 @@ int run(int argc, char** argv) {
     bool runMode = false;
     bool emitEXE = false;
     std::string outExePath;
+    std::string rtPath; // --rt=<arquivo>
     bool emitASM = false;
     std::string outAsmPath;
     bool emitBC = false;
@@ -74,6 +85,10 @@ int run(int argc, char** argv) {
             optProvided = true;
         } else if (a == "--opt") {
             optProvided = true; // mantém O0
+        } else if (a == "-O0" || a == "-O1" || a == "-O2" || a == "-O3" || a == "-Os" || a == "-Oz") {
+            // níveis de otimização no estilo clang
+            optLevel = a.substr(1); // remove '-' e mantém "O*"
+            optProvided = true;
         } else if (a.rfind("--opt-pipeline=", 0) == 0) {
             optPipeline = a.substr(std::string("--opt-pipeline=").size());
             if (optPipeline.empty()) {
@@ -83,8 +98,14 @@ int run(int argc, char** argv) {
         } else if (a == "--opt-pipeline") {
             std::cerr << "error: falta valor para --opt-pipeline (use --opt-pipeline=<texto>)\n";
             return 1;
+        } else if (a.rfind("--rt=", 0) == 0) {
+            rtPath = a.substr(5);
+        } else if (a == "--print-pipeline") {
+            gPrintPipeline = true;
+        } else if (a == "-g" || a == "--debug") {
+            debugEnabled = true;
         }
-    
+
     }
 
     if (mode == "--help") {
@@ -103,6 +124,7 @@ int run(int argc, char** argv) {
         std::cout << "  --emit-obj=<arq>     Gera objeto nativo no arquivo informado\n";
         std::cout << "  --emit-exe           Gera executavel nativo (sem -o: salva em <input> sem extensao)\n";
         std::cout << "  --emit-exe=<arq>     Gera executavel no arquivo informado\n";
+        std::cout << "  --rt=<arq>           Caminho do runtime (libmycc_runtime.a). Default embutido.\n";
         std::cout << "  --emit-asm           Gera assembly (.s) (sem -o: salva em <input>.s)\n";
         std::cout << "  --emit-asm=<arq>     Gera assembly textual no arquivo informado\n";
         std::cout << "  --emit-bc            Gera bitcode LLVM (.bc) (sem -o: <input>.bc)\n";
@@ -110,7 +132,10 @@ int run(int argc, char** argv) {
         std::cout << "  --emit-ll-opt        Salva IR otimizado em <input>.opt.ll (ou -o <arq>)\n";
         std::cout << "  --emit-ll-opt=<arq>  Salva IR otimizado no arquivo informado\n";
         std::cout << "  --opt[=O0|O1|O2|O3|Os|Oz]   Define o nivel de otimizacao (padrao: O0)\n";
+        std::cout << "  -O0|-O1|-O2|-O3|-Os|-Oz     Niveis de otimizacao no estilo clang\n";
         std::cout << "  --opt-pipeline=<texto>      Pipeline textual personalizado (PassBuilder)\n";
+        std::cout << "  --print-pipeline            Mostra pipeline de otimizacao antes de rodar\n";
+        std::cout << "  -g | --debug           Gera informacoes de depuracao (DWARF) em ll/obj/asm\n";
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
         std::cout << "  --target=<triple>    Define o target triple (ex.: aarch64-apple-darwin, x86_64-apple-darwin)\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
@@ -194,21 +219,17 @@ int run(int argc, char** argv) {
             }
 
             int idx = consumedOptFirst ? 3 : 2; // próximo argumento deve ser -o ou o arquivo de entrada
-            if (argc <= idx) {
-                std::cerr << "error: faltou o caminho do arquivo .my\n";
-                return 1;
+            if (argc <= idx) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
+            // permita flags após o modo; procure primeiro não-flag como arquivo
+            auto isDashFlag = [](const std::string& s){ return (s=="-o"||s=="-g"|| (s.size()>=2 && s[0]=='-' && s[1]=='O')); };
+            // trata -o se aparecer
+            for (int j = idx; j < argc; ++j) {
+                std::string a = argv[j];
+                if (a == "-o") { if (j+1<argc) { outPath = argv[j+1]; ++j; } continue; }
+                if (a.rfind("--",0)==0 || isDashFlag(a)) continue;
+                file = a; break;
             }
-            if (std::string(argv[idx]) == "-o") {
-                if (argc < idx + 3) {
-                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
-                    return 1;
-                }
-                // -o sempre prevalece sobre o valor vindo de --emit-ll=...
-                outPath = argv[idx + 1];
-                file    = argv[idx + 2];
-            } else {
-                file = argv[idx];
-            }
+            if (file.empty()) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
         } else if (modeEmitOBJ) {
             emitOBJ = true;
             // permite --emit-obj=out.o
@@ -218,20 +239,15 @@ int run(int argc, char** argv) {
             }
 
             int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
-            if (argc <= idx) {
-                std::cerr << "error: faltou o caminho do arquivo .my\n";
-                return 1;
+            if (argc <= idx) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
+            auto isDashFlag = [](const std::string& s){ return (s=="-o"||s=="-g"|| (s.size()>=2 && s[0]=='-' && s[1]=='O')); };
+            for (int j = idx; j < argc; ++j) {
+                std::string a = argv[j];
+                if (a == "-o") { if (j+1<argc) { outObjPath = argv[j+1]; ++j; } continue; }
+                if (a.rfind("--",0)==0 || isDashFlag(a)) continue;
+                file = a; break;
             }
-            if (std::string(argv[idx]) == "-o") {
-                if (argc < idx + 3) {
-                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
-                    return 1;
-                }
-                outObjPath = argv[idx + 1];
-                file       = argv[idx + 2];
-            } else {
-                file = argv[idx];
-            }
+            if (file.empty()) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
         } else if (modeEmitEXE) {
             emitEXE = true;
             // permite --emit-exe=out
@@ -241,20 +257,15 @@ int run(int argc, char** argv) {
             }
 
             int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
-            if (argc <= idx) {
-                std::cerr << "error: faltou o caminho do arquivo .my\n";
-                return 1;
+            if (argc <= idx) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
+            auto isDashFlag = [](const std::string& s){ return (s=="-o"||s=="-g"|| (s.size()>=2 && s[0]=='-' && s[1]=='O')); };
+            for (int j = idx; j < argc; ++j) {
+                std::string a = argv[j];
+                if (a == "-o") { if (j+1<argc) { outExePath = argv[j+1]; ++j; } continue; }
+                if (a.rfind("--",0)==0 || isDashFlag(a)) continue;
+                file = a; break;
             }
-            if (std::string(argv[idx]) == "-o") {
-                if (argc < idx + 3) {
-                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
-                    return 1;
-                }
-                outExePath = argv[idx + 1];
-                file       = argv[idx + 2];
-            } else {
-                file = argv[idx];
-            }
+            if (file.empty()) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
         } else if (modeEmitBC) {
             emitBC = true;
             auto eq = mode.find('=');
@@ -263,20 +274,15 @@ int run(int argc, char** argv) {
             }
 
             int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
-            if (argc <= idx) {
-                std::cerr << "error: faltou o caminho do arquivo .my\n";
-                return 1;
+            if (argc <= idx) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
+            auto isDashFlag = [](const std::string& s){ return (s=="-o"||s=="-g"|| (s.size()>=2 && s[0]=='-' && s[1]=='O')); };
+            for (int j = idx; j < argc; ++j) {
+                std::string a = argv[j];
+                if (a == "-o") { if (j+1<argc) { outBCPath = argv[j+1]; ++j; } continue; }
+                if (a.rfind("--",0)==0 || isDashFlag(a)) continue;
+                file = a; break;
             }
-            if (std::string(argv[idx]) == "-o") {
-                if (argc < idx + 3) {
-                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
-                    return 1;
-                }
-                outBCPath = argv[idx + 1];
-                file      = argv[idx + 2];
-            } else {
-                file = argv[idx];
-            }
+            if (file.empty()) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
         } else if (modeEmitLLOpt) {
             emitLLOpt = true;
             auto eq = mode.find('=');
@@ -301,6 +307,7 @@ int run(int argc, char** argv) {
                     std::string a = argv[j];
                     if (a == "-o") { ++j; continue; }
                     if (a.rfind("--", 0) == 0) continue;
+                    if (a == "-g" || (a.size()>=2 && a[0]=='-' && a[1]=='O')) continue;
                     file = a; found = true; break;
                 }
                 if (!found) {
@@ -314,6 +321,7 @@ int run(int argc, char** argv) {
                     std::string a = argv[j];
                     if (a == "-o") { ++j; continue; }
                     if (a.rfind("--", 0) == 0) continue;
+                    if (a == "-g" || (a.size()>=2 && a[0]=='-' && a[1]=='O')) continue;
                     file = a; found = true; break;
                 }
                 if (!found) {
@@ -329,20 +337,15 @@ int run(int argc, char** argv) {
             }
 
             int idx = consumedOptFirst ? 3 : 2; // pode vir -o <arq> antes do arquivo de entrada
-            if (argc <= idx) {
-                std::cerr << "error: faltou o caminho do arquivo .my\n";
-                return 1;
+            if (argc <= idx) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
+            auto isDashFlag = [](const std::string& s){ return (s=="-o"||s=="-g"|| (s.size()>=2 && s[0]=='-' && s[1]=='O')); };
+            for (int j = idx; j < argc; ++j) {
+                std::string a = argv[j];
+                if (a == "-o") { if (j+1<argc) { outAsmPath = argv[j+1]; ++j; } continue; }
+                if (a.rfind("--",0)==0 || isDashFlag(a)) continue;
+                file = a; break;
             }
-            if (std::string(argv[idx]) == "-o") {
-                if (argc < idx + 3) {
-                    std::cerr << "error: faltou o arquivo de saída ou o arquivo de entrada\n";
-                    return 1;
-                }
-                outAsmPath = argv[idx + 1];
-                file       = argv[idx + 2];
-            } else {
-                file = argv[idx];
-            }
+            if (file.empty()) { std::cerr << "error: faltou o caminho do arquivo .my\n"; return 1; }
         } else if (modeRun) {
             runMode = true;
             int idx = consumedOptFirst ? 3 : 2;
@@ -403,6 +406,15 @@ int run(int argc, char** argv) {
             MPM = PB.buildPerModuleDefaultPipeline(OL);
         }
 
+        // Patch 11: opcionalmente imprime o pipeline textual antes de executar
+        if (gPrintPipeline) {
+            std::string Text;
+            raw_string_ostream OS(Text);
+            MPM.printPipeline(OS, [](llvm::StringRef N) { return N; });
+            OS.flush();
+            errs() << "[pipeline] " << Text << "\n";
+        }
+
         MPM.run(M, MAM);
         return true;
     };
@@ -438,7 +450,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
         // Gera IR
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -491,7 +503,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -501,8 +513,8 @@ int run(int argc, char** argv) {
             return 1;
         }
 
-        // Otimização opcional
-        if (!optPipeline.empty() || (optProvided && optLevel != "O0")) {
+        // Otimização opcional (ou apenas imprimir pipeline com -O0)
+        if (!optPipeline.empty() || (optProvided && optLevel != "O0") || gPrintPipeline) {
             std::string e; if (!optimizeModule(*module, nullptr, optLevel, optPipeline, e)) {
                 std::cerr << "error: " << e << "\n"; return 1; }
             if (llvm::verifyModule(*module, &llvm::errs())) {
@@ -536,7 +548,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -581,7 +593,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -624,7 +636,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -711,7 +723,7 @@ int run(int argc, char** argv) {
             if (!ok || diag.hadError) return 1;
         }
 
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -795,7 +807,7 @@ int run(int argc, char** argv) {
         }
 
         // 2) Gera IR
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 
@@ -849,7 +861,9 @@ int run(int argc, char** argv) {
 
         std::string objTmp = std::string("/tmp/") + leaf + ".o";
         if (outExePath.empty()) {
-            outExePath = std::string("/tmp/") + leaf;
+            outExePath = file;
+            auto p = outExePath.find_last_of('.');
+            if (p != std::string::npos) outExePath = outExePath.substr(0, p);
         }
 
         // 6) Emitir .o
@@ -869,7 +883,7 @@ int run(int argc, char** argv) {
             dest.flush();
         }
 
-        // 7) Linkar com clang + runtime
+        // 7) Descobre runtime e linka com clang
         auto shellQuote = [](const std::string& s) {
             std::string out = "'";
             for (char c : s) {
@@ -901,15 +915,21 @@ int run(int argc, char** argv) {
             else if (TT.getArch() == llvm::Triple::x86_64) archFlag = " -arch x86_64";
         }
 
-#ifndef MYCC_RUNTIME_LIB
-#  error "MYCC_RUNTIME_LIB nao definido pelo CMake"
+        // Resolve caminho da runtime: --rt=... > default embutido > erro
+        std::string rt = rtPath;
+#ifdef MYCC_DEFAULT_RT_PATH
+        if (rt.empty()) rt = MYCC_DEFAULT_RT_PATH;
 #endif
+        if (rt.empty()) {
+            std::cerr << "error: runtime nao informado. Use --rt=<caminho_para_libmycc_runtime.a>\n";
+            return 1;
+        }
 
         std::string cmd = clangBin
             + archFlag
             + " -o " + shellQuote(outExePath)
             + " " + shellQuote(objTmp)
-            + " " + shellQuote(MYCC_RUNTIME_LIB);
+            + " " + shellQuote(rt);
         // Se o SDK padrão estiver incorreto no ambiente, force via xcrun
 #ifdef __APPLE__
         {
@@ -942,7 +962,7 @@ int run(int argc, char** argv) {
         }
 
         // 2) Gera IR
-        Codegen cg("mycc_module", diag);
+        Codegen cg("mycc_module", diag, debugEnabled, file);
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
 

@@ -8,17 +8,62 @@ namespace mycc {
 
     
 // ------------------------------------------------------------
-Codegen::Codegen(std::string moduleName, Diag& d)
-    : diag(d) {
+Codegen::Codegen(std::string moduleName, Diag& d, bool enableDebug, const std::string& srcPath)
+    : diag(d), debug(enableDebug) {
     mod = std::make_unique<llvm::Module>(moduleName, ctx);
     builder = std::make_unique<llvm::IRBuilder<>>(ctx);
+    if (debug) setupDebug(moduleName, srcPath);
     seedBuiltins();
 }
 
 std::unique_ptr<llvm::Module> Codegen::run(Program* p) {
     for (auto& fptr : p->funcs) emitFuncDecl(fptr.get());
     for (auto& fptr : p->funcs) emitFuncBody(fptr.get());
+    if (debug && dib) dib->finalize();
     return std::move(mod);
+}
+
+void Codegen::setupDebug(const std::string& moduleName, const std::string& srcPath) {
+    using namespace llvm;
+    // Versões de debug (DWARF v5, metadata v)
+    mod->addModuleFlag(Module::Warning, "Debug Info Version", DEBUG_METADATA_VERSION);
+    mod->addModuleFlag(Module::Warning, "Dwarf Version", 5);
+
+    dib = std::make_unique<DIBuilder>(*mod);
+
+    std::string dir = ".";
+    std::string base = srcPath;
+    if (!srcPath.empty()) {
+        auto pos = srcPath.find_last_of('/');
+        if (pos != std::string::npos) {
+            dir = srcPath.substr(0, pos);
+            base = srcPath.substr(pos + 1);
+        }
+    }
+
+    difile = dib->createFile(base, dir);
+
+    cu = dib->createCompileUnit(
+        llvm::dwarf::DW_LANG_C, // idioma "neutro" o suficiente
+        difile,
+        "mycc-pt",
+        false, // optimized
+        "",
+        0
+    );
+
+    diVoid = dib->createUnspecifiedType("void");
+    diI32  = dib->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
+    diI1   = dib->createBasicType("bool", 1,  llvm::dwarf::DW_ATE_boolean);
+}
+
+static llvm::DIType* diFromType(llvm::DIBuilder* D, llvm::DIType* diI32, llvm::DIType* diI1, llvm::DIType* diVoid, const mycc::Type& T) {
+    switch (T.kind) {
+        case mycc::Type::Inteiro: return diI32;
+        case mycc::Type::Logico:  return diI1;
+        case mycc::Type::Vazio:   return diVoid;
+    }
+    return diI32;
 }
 
 // ------------------------------------------------------------
@@ -79,6 +124,28 @@ Function* Codegen::emitFuncDecl(FuncDecl* f) {
     llvm::FunctionType* FT = llvm::FunctionType::get(ty(f->ret), paramRef, /*isVarArg=*/false);
     Function* F = Function::Create(FT, Function::ExternalLinkage, f->name, mod.get());
 
+    if (debug && cu && difile && dib) {
+        // Monta assinatura DI
+        std::vector<llvm::Metadata*> paramsMD;
+        paramsMD.reserve(f->params.size() + 1);
+        paramsMD.push_back(diFromType(dib.get(), diI32, diI1, diVoid, f->ret));
+        for (auto& p : f->params) paramsMD.push_back(diFromType(dib.get(), diI32, diI1, diVoid, p.type));
+        auto *diSubTy = dib->createSubroutineType(dib->getOrCreateTypeArray(paramsMD));
+
+        auto *SP = dib->createFunction(
+            cu,
+            f->name,
+            f->name,
+            difile,
+            1, // line
+            diSubTy,
+            1, // scope line
+            llvm::DINode::FlagZero,
+            llvm::DISubprogram::SPFlagDefinition
+        );
+        F->setSubprogram(SP);
+    }
+
     unsigned i=0;
     for (auto& arg : F->args()) {
         arg.setName(f->params[i++].name);
@@ -101,6 +168,12 @@ void Codegen::emitFuncBody(FuncDecl* f) {
         builder->SetInsertPoint(entry);
     } else {
         builder->SetInsertPoint(&F->getEntryBlock(), F->getEntryBlock().end());
+    }
+
+    if (debug) {
+        if (auto *SP = F->getSubprogram()) {
+            builder->SetCurrentDebugLocation(llvm::DILocation::get(ctx, 1, 1, SP));
+        }
     }
 
     Scope scope(nullptr);
