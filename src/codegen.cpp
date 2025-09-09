@@ -1,6 +1,7 @@
 #include "codegen.hpp"
 #include <cassert>
 #include <string>
+#include <llvm/IR/Intrinsics.h>
 
 using namespace llvm;
 
@@ -180,6 +181,22 @@ void Codegen::seedBuiltins() {
                                         { llvm::PointerType::get(ctx, 0) }, false);
     if (!mod->getFunction("prints"))
         llvm::Function::Create(FTs, llvm::Function::ExternalLinkage, "prints", mod.get());
+
+    // R2-11: placeholders para copy/fill (interceptamos no codegen de Call)
+    if (!mod->getFunction("copy")) {
+        auto *FT = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(ctx),
+            { llvm::PointerType::get(ctx, 0), llvm::PointerType::get(ctx, 0), llvm::Type::getInt32Ty(ctx) },
+            false);
+        llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "copy", mod.get());
+    }
+    if (!mod->getFunction("fill")) {
+        auto *FT = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(ctx),
+            { llvm::PointerType::get(ctx, 0), llvm::Type::getInt32Ty(ctx), llvm::Type::getInt32Ty(ctx) },
+            false);
+        llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "fill", mod.get());
+    }
 }
 
 llvm::Value* Codegen::toBool(llvm::Value* v) {
@@ -623,6 +640,40 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
     }
 
     if (auto c = dynamic_cast<Call*>(e)) {
+        // R2-11: intercepta built-ins copy/fill para emitir memcpy/memset
+        if (c->callee == "copy") {
+            if (c->args.size() != 2) {
+                diag.error(0,0, "copy espera 2 argumentos");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            ViewInfo dst = getContiguous1DView(c->args[0].get(), scope);
+            ViewInfo src = getContiguous1DView(c->args[1].get(), scope);
+            if (!dst.basePtrI8 || !dst.lenBytes || !src.basePtrI8 || !src.lenBytes) {
+                diag.error(0,0, "copy: views nao-contiguos ou indefinidos");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            // opcional: se ambos tamanhos forem constantes, poderíamos comparar
+            auto align = llvm::MaybeAlign(dst.elemBytes);
+            builder->CreateMemCpy(dst.basePtrI8, align, src.basePtrI8, align, dst.lenBytes);
+            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        }
+        if (c->callee == "fill") {
+            if (c->args.size() != 2) {
+                diag.error(0,0, "fill espera 2 argumentos");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            ViewInfo dst = getContiguous1DView(c->args[0].get(), scope);
+            if (!dst.basePtrI8 || !dst.lenBytes) {
+                diag.error(0,0, "fill: view nao-contiguo ou indefinido");
+                return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            }
+            llvm::Value* val = emitExpr(c->args[1].get(), scope);
+            if (!val->getType()->isIntegerTy(32)) val = builder->CreateZExtOrTrunc(val, llvm::Type::getInt32Ty(ctx));
+            llvm::Value* valI8 = builder->CreateTrunc(val, llvm::Type::getInt8Ty(ctx));
+            auto align = llvm::MaybeAlign(dst.elemBytes);
+            builder->CreateMemSet(dst.basePtrI8, valI8, dst.lenBytes, align);
+            return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        }
         llvm::Function* callee = mod->getFunction(c->callee);
         if (!callee) {
             diag.error(0,0, std::string("codegen: funcao nao encontrada: ") + c->callee);
@@ -1054,4 +1105,56 @@ void Codegen::emitSwitch(SwitchStmt* s, Scope& scope) {
     }
 }
 
+} // namespace mycc
+// R2-11: obtém view contiguo 1D (i8* base + tamanho em bytes) a partir de um Index/VarRef
+namespace mycc {
+Codegen::ViewInfo Codegen::getContiguous1DView(Expr* e, Scope& scope) {
+    ViewInfo vi;
+
+    // Caso: cadeia de Index ou VarRef
+    std::string name;
+    std::vector<llvm::Value*> idxs;
+    if (auto ix = dynamic_cast<Index*>(e)) {
+        auto pair = flattenIndexChain(e, scope);
+        name = pair.first;
+        idxs = std::move(pair.second);
+    } else if (auto vr = dynamic_cast<VarRef*>(e)) {
+        name = vr->name;
+    } else {
+        return vi; // nao reconhecido
+    }
+
+    if (name.empty()) return vi;
+    VarSlot* S = scope.lookup(name);
+    if (!S) return vi;
+    auto it = arrayDimsByName.find(name);
+    if (it == arrayDimsByName.end()) return vi;
+    const std::vector<int>& dims = it->second;
+    size_t rank = dims.size();
+
+    // view contiguo 1D quando: (a) rank==1 e idxs.size()==0 (vetor inteiro), ou (b) idxs.size()==rank-1
+    if (!((rank == 1 && idxs.size() == 0) || (rank >= 1 && idxs.size() + 1 == rank))) {
+        return vi;
+    }
+
+    llvm::Value* off = nullptr;
+    if (!idxs.empty()) off = linearizeOffset(dims, idxs);
+    else off = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+
+    llvm::Value* baseI32Ptr = nullptr;
+    if (S->isGlobal && S->isArray) {
+        auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+        baseI32Ptr = builder->CreateInBoundsGEP(
+            llvm::cast<llvm::GlobalVariable>(S->ptr)->getValueType(), S->ptr,
+            std::array<llvm::Value*,2>{zero, off}, name + ".g.slice.base");
+    } else {
+        baseI32Ptr = builder->CreateInBoundsGEP(S->elemTy, S->ptr, off, name + ".slice.base");
+    }
+    llvm::Value* baseI8 = builder->CreateBitCast(baseI32Ptr, llvm::PointerType::get(ctx, 0));
+    vi.basePtrI8 = baseI8;
+    int lenElems = dims.back();
+    vi.lenBytes = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), lenElems * 4);
+    vi.elemBytes = 4;
+    return vi;
+}
 } // namespace mycc

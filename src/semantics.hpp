@@ -286,6 +286,29 @@ private:
         funcs["printi"] = FuncSig{ Type::vazio(), { Type::inteiro() } };
         funcs["printb"] = FuncSig{ Type::vazio(), { Type::logico()  } };
         funcs["prints"] = FuncSig{ Type::vazio(), { Type::texto()   } };
+
+        // R2-11: built-ins para operacoes em views contiguos (1D)
+        // copy(dstView1D, srcView1D) -> int (valor de retorno indiferente)
+        {
+            FuncSig sig;
+            sig.ret = Type::inteiro();
+            sig.params = { Type::inteiro(), Type::inteiro() }; // base types; dims indicam arrays
+            sig.paramDims.resize(2);
+            // rank 1, tamanho desconhecido (0 => nao checa comprimento estatico)
+            sig.paramDims[0] = {0};
+            sig.paramDims[1] = {0};
+            funcs["copy"] = std::move(sig);
+        }
+        // fill(dstView1D, valorInt) -> int
+        {
+            FuncSig sig;
+            sig.ret = Type::inteiro();
+            sig.params = { Type::inteiro(), Type::inteiro() };
+            sig.paramDims.resize(2);
+            sig.paramDims[0] = {0}; // view 1D
+            sig.paramDims[1] = {};  // escalar int
+            funcs["fill"] = std::move(sig);
+        }
     }
 
     void collectFuncs(Program* prog){
@@ -1089,6 +1112,32 @@ private:
         }
         if (sig.ret.isArray()){
             diag.error(0,0, "retorno de array por valor nao suportado em '" + fname + "'");
+        }
+        // R2-11: checagem leve de copy(view1D, view1D) para comprimentos quando conhecidos
+        if (fname == "copy" && c->args.size() == 2) {
+            auto getLen1D = [&](Expr* ex)->int{
+                // VarRef 1D
+                if (auto vr = dynamic_cast<VarRef*>(ex)) {
+                    auto D = scope.getDims(vr->name);
+                    if (D.size() == 1) return D[0];
+                }
+                // Slice 1D: cadeia de Index cujo rank final é 1
+                std::vector<Expr*> idxExprs2; Expr* cur2 = ex; std::string name2;
+                while (auto ix = dynamic_cast<Index*>(cur2)) { idxExprs2.push_back(ix->idx.get()); cur2 = ix->base.get(); }
+                if (auto vr2 = dynamic_cast<VarRef*>(cur2)) {
+                    name2 = vr2->name;
+                    auto D = scope.getDims(name2);
+                    if (!D.empty() && idxExprs2.size() + 1 == D.size()) {
+                        return D.back();
+                    }
+                }
+                return -1;
+            };
+            int L = getLen1D(c->args[0].get());
+            int R = getLen1D(c->args[1].get());
+            if (L > 0 && R > 0 && L != R) {
+                diag.error(0,0, "copy: comprimentos diferentes entre origem e destino");
+            }
         }
         return sig.ret;
     }

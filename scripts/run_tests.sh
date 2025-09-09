@@ -450,4 +450,10 @@ if [[ -x "$ROOT/scripts/run_sanitizer_tests.sh" ]]; then
   "$ROOT/scripts/run_sanitizer_tests.sh" || true
 fi
 
+# --- Slices contíguos (copy/fill) ---
+if [[ -x "$ROOT/scripts/run_view_ops_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_view_ops_tests.sh" || true
+fi
+
 [[ $fail -eq 0 ]] || exit 1

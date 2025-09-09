@@ -90,6 +90,14 @@ private:
     llvm::Value* linearizeOffset(const std::vector<int>& dims,
                                  const std::vector<llvm::Value*>& idxs);
 
+    // R2-11: info de view contiguo 1D
+    struct ViewInfo {
+        llvm::Value* basePtrI8 = nullptr; // i8*
+        llvm::Value* lenBytes  = nullptr; // i32
+        unsigned elemBytes     = 4;       // inteiro = 4
+    };
+    ViewInfo getContiguous1DView(Expr* e, Scope& scope);
+
     // ---- Debug info ----
     void setLoc(const SourceLoc& L);
     bool debug = false;
