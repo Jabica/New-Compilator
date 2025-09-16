@@ -1,0 +1,7 @@
+funcao main(): inteiro {
+  retorna 7;
+  variavel z: inteiro;
+  z = 123;
+  retorna z;
+}
+

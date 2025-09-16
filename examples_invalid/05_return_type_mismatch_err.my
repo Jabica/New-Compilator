@@ -1,0 +1,5 @@
+funcao foo(): inteiro {
+    retorna; // retorna vazio onde inteiro é esperado
+}
+funcao principal(): inteiro { retorna foo(); }
+

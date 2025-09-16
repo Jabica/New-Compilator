@@ -18,11 +18,15 @@ class Codegen {
 public:
     enum class Fast2DMode { Off, Auto, Always };
     enum class Vec2DMode  { Off, Auto, Always };
+    enum class Unroll2DMode { Off, Auto, Always };
     Codegen(std::string moduleName, Diag& d, bool enableDebug = false, const std::string& srcPath = "", bool ubsanEnabled = false, bool asanEnabled = false);
-    void setFast2DMode(Fast2DMode m) { fast2DMode = m; }
-    void setVec2DMode(Vec2DMode m)   { vec2DMode  = m; }
+    void setFast2DMode(Fast2DMode m)    { fast2DMode = m; }
+    void setVec2DMode(Vec2DMode m)      { vec2DMode  = m; }
+    void setUnroll2DMode(Unroll2DMode m){ unroll2DMode = m; }
+    void setVerifyIR(bool v)            { verifyIR = v; }
     // Gera IR para um Programa. Retorna ponteiro para Module pronto.
     std::unique_ptr<llvm::Module> run(Program* prog);
+    void finalizeModule();
 
 private:
     void seedBuiltins();
@@ -152,8 +156,24 @@ private:
     std::unordered_map<std::string, std::vector<int>> arrayDimsByName;
 
     // R2-17: modo de fast-path 2D
-    Fast2DMode fast2DMode = Fast2DMode::Auto;
-    Vec2DMode  vec2DMode  = Vec2DMode::Auto;
+    Fast2DMode   fast2DMode   = Fast2DMode::Auto;
+    Vec2DMode    vec2DMode    = Vec2DMode::Auto;
+    Unroll2DMode unroll2DMode = Unroll2DMode::Auto;
+
+    // R2-21: verificação de IR e helpers de fluxo
+    bool verifyIR = false;
+    llvm::Function* currentFunction();
+    void ensureTerminatorOrBranchTo(llvm::BasicBlock* from, llvm::BasicBlock* target);
+    llvm::BasicBlock* createBlock(const std::string& name, llvm::Function* F = nullptr);
+
+    // R2-22: folding helpers e branch weights
+    bool isConstTrue (llvm::Value* v) const;
+    bool isConstFalse(llvm::Value* v) const;
+    void attachWeights(llvm::BranchInst* br, unsigned trueW, unsigned falseW);
+
+    // R2-22: emissores explícitos de break/continue
+    void emitBreak(BreakStmt* s, Scope& scope);
+    void emitContinue(ContinueStmt* s, Scope& scope);
 };
 
 } // namespace mycc

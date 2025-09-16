@@ -1,0 +1,8 @@
+funcao main(): inteiro {
+  variavel a: inteiro = 10;
+  variavel b: inteiro = 32;
+  variavel s: inteiro = a + b;
+  printi(s);
+  retorna s;
+}
+

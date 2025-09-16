@@ -41,6 +41,9 @@ static bool gPrintPipeline = false;
 // Patch 12: global flag to enable debug info generation
 static bool debugEnabled = false;
 
+// Versão do compilador (A3)
+static const char* kMyccVersion = "mycc-pt v0.1.0 (R2-A3)";
+
 static std::string readFile(const std::string& path) {
     std::ifstream ifs(path);
     if (!ifs) return {};
@@ -81,7 +84,10 @@ int run(int argc, char** argv) {
     bool useASan = false;              // --asan
     bool useUBSan = false;             // --ubsan
     std::string fast2dArg = "auto";    // --fast2d=<off|auto|always>
-    std::string vec2dArg  = "auto";    // --vec2d=<off|auto|always>
+    std::string vec2dArg   = "auto";   // --vec2d=<off|auto|always>
+    std::string unroll2dArg= "auto";   // --unroll2d=<off|auto|always>
+    bool optVerifyIR = false;          // --verify-ir
+    bool showVersion = false;          // --version
 
     // Pre-scan: capture opções de otimização em qualquer posição
     for (int i = 1; i < argc; ++i) {
@@ -114,10 +120,16 @@ int run(int argc, char** argv) {
             useASan = true;
         } else if (a == "--ubsan") {
             useUBSan = true;
+        } else if (a == "--version") {
+            showVersion = true;
         } else if (a.rfind("--fast2d=", 0) == 0) {
             fast2dArg = a.substr(std::string("--fast2d=").size());
         } else if (a.rfind("--vec2d=", 0) == 0) {
             vec2dArg = a.substr(std::string("--vec2d=").size());
+        } else if (a.rfind("--unroll2d=", 0) == 0) {
+            unroll2dArg = a.substr(std::string("--unroll2d=").size());
+        } else if (a == "--verify-ir") {
+            optVerifyIR = true;
         }
 
     }
@@ -126,6 +138,7 @@ int run(int argc, char** argv) {
         std::cout << "mycc-pt - Compilador Educacional\n";
         std::cout << "Flags disponíveis:\n";
         std::cout << "  --help               Exibe esta mensagem\n";
+        std::cout << "  --version            Mostra versao do compilador\n";
         std::cout << "  --parse-only         Executa apenas análise léxica/sintática\n";
         std::cout << "  --dump-ast           Mostra a AST gerada\n";
         std::cout << "  --dump-ir            Mostra o IR LLVM (roda semântica e verifica IR)\n";
@@ -155,9 +168,16 @@ int run(int argc, char** argv) {
         std::cout << "  --run                Gera IR e executa com 'lli'\n";
         std::cout << "  --fast2d=<modo>      Controla fast-paths 2D: off|auto|always (padrao: auto)\n";
         std::cout << "  --vec2d=<modo>       Vetorizacao em fill2d!=0: off|auto|always (padrao: auto)\n";
+        std::cout << "  --unroll2d=<modo>    Desenrolar escalar (x8) em fill2d!=0: off|auto|always (padrao: auto)\n";
+        std::cout << "  --verify-ir          Roda verificador do LLVM no modulo gerado\n";
         std::cout << "  --target=<triple>    Define o target triple (ex.: aarch64-apple-darwin, x86_64-apple-darwin)\n";
         std::cout << "  -o <arquivo>         Especifica saída (também para --emit-ll)\n";
         std::cout << "\nDica: você pode passar só o arquivo (sem flag) para rodar --check por padrão.\n";
+        return 0;
+    }
+
+    if (mode == "--version" || showVersion) {
+        std::cout << kMyccVersion << "\n";
         return 0;
     }
 
@@ -494,12 +514,17 @@ int run(int argc, char** argv) {
         {
             using F = Codegen::Fast2DMode;
             using V = Codegen::Vec2DMode;
+            using U = Codegen::Unroll2DMode;
             if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
             else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
             else                              cg.setFast2DMode(F::Auto);
             if      (vec2dArg == "off")     cg.setVec2DMode(V::Off);
             else if (vec2dArg == "always")  cg.setVec2DMode(V::Always);
             else                              cg.setVec2DMode(V::Auto);
+            if      (unroll2dArg == "off")     cg.setUnroll2DMode(U::Off);
+            else if (unroll2dArg == "always")  cg.setUnroll2DMode(U::Always);
+            else                                  cg.setUnroll2DMode(U::Auto);
+            cg.setVerifyIR(optVerifyIR);
         }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
@@ -557,12 +582,17 @@ int run(int argc, char** argv) {
         {
             using F = Codegen::Fast2DMode;
             using V = Codegen::Vec2DMode;
+            using U = Codegen::Unroll2DMode;
             if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
             else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
             else                              cg.setFast2DMode(F::Auto);
             if      (vec2dArg == "off")     cg.setVec2DMode(V::Off);
             else if (vec2dArg == "always")  cg.setVec2DMode(V::Always);
             else                              cg.setVec2DMode(V::Auto);
+            if      (unroll2dArg == "off")     cg.setUnroll2DMode(U::Off);
+            else if (unroll2dArg == "always")  cg.setUnroll2DMode(U::Always);
+            else                                  cg.setUnroll2DMode(U::Auto);
+            cg.setVerifyIR(optVerifyIR);
         }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
@@ -612,12 +642,17 @@ int run(int argc, char** argv) {
         {
             using F = Codegen::Fast2DMode;
             using V = Codegen::Vec2DMode;
+            using U = Codegen::Unroll2DMode;
             if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
             else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
             else                              cg.setFast2DMode(F::Auto);
             if      (vec2dArg == "off")     cg.setVec2DMode(V::Off);
             else if (vec2dArg == "always")  cg.setVec2DMode(V::Always);
             else                              cg.setVec2DMode(V::Auto);
+            if      (unroll2dArg == "off")     cg.setUnroll2DMode(U::Off);
+            else if (unroll2dArg == "always")  cg.setUnroll2DMode(U::Always);
+            else                                  cg.setUnroll2DMode(U::Auto);
+            cg.setVerifyIR(optVerifyIR);
         }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
@@ -667,12 +702,17 @@ int run(int argc, char** argv) {
         {
             using F = Codegen::Fast2DMode;
             using V = Codegen::Vec2DMode;
+            using U = Codegen::Unroll2DMode;
             if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
             else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
             else                              cg.setFast2DMode(F::Auto);
             if      (vec2dArg == "off")     cg.setVec2DMode(V::Off);
             else if (vec2dArg == "always")  cg.setVec2DMode(V::Always);
             else                              cg.setVec2DMode(V::Auto);
+            if      (unroll2dArg == "off")     cg.setUnroll2DMode(U::Off);
+            else if (unroll2dArg == "always")  cg.setUnroll2DMode(U::Always);
+            else                                  cg.setUnroll2DMode(U::Auto);
+            cg.setVerifyIR(optVerifyIR);
         }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
@@ -720,12 +760,17 @@ int run(int argc, char** argv) {
         {
             using F = Codegen::Fast2DMode;
             using V = Codegen::Vec2DMode;
+            using U = Codegen::Unroll2DMode;
             if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
             else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
             else                              cg.setFast2DMode(F::Auto);
             if      (vec2dArg == "off")     cg.setVec2DMode(V::Off);
             else if (vec2dArg == "always")  cg.setVec2DMode(V::Always);
             else                              cg.setVec2DMode(V::Auto);
+            if      (unroll2dArg == "off")     cg.setUnroll2DMode(U::Off);
+            else if (unroll2dArg == "always")  cg.setUnroll2DMode(U::Always);
+            else                                  cg.setUnroll2DMode(U::Auto);
+            cg.setVerifyIR(optVerifyIR);
         }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
@@ -817,12 +862,16 @@ int run(int argc, char** argv) {
         {
             using F = Codegen::Fast2DMode;
             using V = Codegen::Vec2DMode;
+            using U = Codegen::Unroll2DMode;
             if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
             else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
             else                              cg.setFast2DMode(F::Auto);
             if      (vec2dArg == "off")     cg.setVec2DMode(V::Off);
             else if (vec2dArg == "always")  cg.setVec2DMode(V::Always);
             else                              cg.setVec2DMode(V::Auto);
+            if      (unroll2dArg == "off")     cg.setUnroll2DMode(U::Off);
+            else if (unroll2dArg == "always")  cg.setUnroll2DMode(U::Always);
+            else                                  cg.setUnroll2DMode(U::Auto);
         }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;
@@ -1076,9 +1125,18 @@ int run(int argc, char** argv) {
         Codegen cg("mycc_module", diag, debugEnabled, file, /*ubsanEnabled=*/useUBSan, /*asanEnabled=*/useASan);
         {
             using F = Codegen::Fast2DMode;
+            using V = Codegen::Vec2DMode;
+            using U = Codegen::Unroll2DMode;
             if      (fast2dArg == "off")    cg.setFast2DMode(F::Off);
             else if (fast2dArg == "always") cg.setFast2DMode(F::Always);
             else                              cg.setFast2DMode(F::Auto);
+            if      (vec2dArg == "off")     cg.setVec2DMode(V::Off);
+            else if (vec2dArg == "always")  cg.setVec2DMode(V::Always);
+            else                              cg.setVec2DMode(V::Auto);
+            if      (unroll2dArg == "off")     cg.setUnroll2DMode(U::Off);
+            else if (unroll2dArg == "always")  cg.setUnroll2DMode(U::Always);
+            else                                  cg.setUnroll2DMode(U::Auto);
+            cg.setVerifyIR(optVerifyIR);
         }
         auto module = cg.run(prog.get());
         if (diag.hadError || !module) return 1;

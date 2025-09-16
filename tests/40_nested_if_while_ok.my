@@ -1,0 +1,16 @@
+funcao main(): inteiro {
+  variavel s: inteiro;
+  variavel i: inteiro;
+  s = 0;
+  i = 0;
+  enquanto (i < 4) {
+    se ((i % 2) == 0) {
+      s = s + 5;
+    } senao {
+      s = s + 1;
+    }
+    i = i + 1;
+  }
+  retorna s; // 12
+}
+

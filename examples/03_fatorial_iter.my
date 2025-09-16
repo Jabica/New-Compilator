@@ -1,0 +1,12 @@
+funcao fatorial(n: inteiro): inteiro {
+  variavel r: inteiro = 1;
+  enquanto (n > 1) { r = r * n; n = n - 1; }
+  retorna r;
+}
+funcao main(): inteiro {
+  variavel v: inteiro = 5;
+  variavel r: inteiro = fatorial(v); // 120
+  printi(r);
+  retorna r;
+}
+

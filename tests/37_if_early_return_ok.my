@@ -1,0 +1,11 @@
+funcao main(): inteiro {
+  variavel x: inteiro;
+  x = 1;
+  se (x == 1) {
+    retorna 10;
+  } senao {
+    // vazio
+  }
+  retorna 0;
+}
+

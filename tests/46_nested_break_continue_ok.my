@@ -1,0 +1,16 @@
+funcao main(): inteiro {
+  variavel s: inteiro; s = 0;
+  variavel i: inteiro; i = 0;
+  enquanto (i < 4) {
+    variavel j: inteiro; j = 0;
+    enquanto (j < 4) {
+      j = j + 1;
+      se (j == 2) { continua; }
+      s = s + 1;
+      se (j == 3) { quebra; }
+    }
+    i = i + 1;
+  }
+  retorna s; // esperado: 8
+}
+

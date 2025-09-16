@@ -1,0 +1,10 @@
+funcao main(): inteiro {
+  variavel a: inteiro[16]; // 4x4
+  // stride = 4, idx = 0, cols = 4, rows = 4 → total 16 elementos
+  fill2d(a, 4, 0, 7, 4, 4); // tudo = 7
+  variavel s: inteiro; variavel i: inteiro;
+  i = 0; s = 0;
+  enquanto (i < 16) { s = s + a[i]; i = i + 1; }
+  retorna s; // 16*7 = 112
+}
+

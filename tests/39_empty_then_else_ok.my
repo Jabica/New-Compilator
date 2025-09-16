@@ -1,0 +1,7 @@
+funcao main(): inteiro {
+  variavel a: inteiro;
+  a = 2;
+  se (a > 0) { } senao { }
+  retorna 1;
+}
+

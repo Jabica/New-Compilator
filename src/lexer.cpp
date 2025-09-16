@@ -21,6 +21,8 @@ static TokenKind keywordKind(const std::string& s) {
         {"para", TokenKind::KwFor},
         {"break", TokenKind::KwBreak},
         {"continue", TokenKind::KwContinue},
+        {"quebra", TokenKind::KwBreak},      // PT-BR alias
+        {"continua", TokenKind::KwContinue}, // PT-BR alias
         {"inteiro", TokenKind::KwInteiro},
         {"logico", TokenKind::KwLogico},
         {"vazio", TokenKind::KwVazio},

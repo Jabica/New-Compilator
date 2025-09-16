@@ -1,0 +1,5 @@
+funcao main(): inteiro {
+  printi(123);
+  retorna 0;
+}
+

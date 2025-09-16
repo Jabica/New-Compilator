@@ -2,6 +2,8 @@
 #include <cassert>
 #include <string>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/IR/MDBuilder.h>
 
 using namespace llvm;
 
@@ -22,7 +24,50 @@ std::unique_ptr<llvm::Module> Codegen::run(Program* p) {
     for (auto& fptr : p->funcs) emitFuncDecl(fptr.get());
     for (auto& fptr : p->funcs) emitFuncBody(fptr.get());
     if (debug && dib) dib->finalize();
+    // R2-21: opcionalmente verifica IR ao final da geração
+    finalizeModule();
     return std::move(mod);
+}
+
+llvm::Function* Codegen::currentFunction() {
+    return builder->GetInsertBlock()->getParent();
+}
+
+llvm::BasicBlock* Codegen::createBlock(const std::string& name, llvm::Function* F) {
+    if (!F) F = currentFunction();
+    return llvm::BasicBlock::Create(ctx, name, F);
+}
+
+void Codegen::ensureTerminatorOrBranchTo(llvm::BasicBlock* from, llvm::BasicBlock* target) {
+    if (!from->getTerminator()) {
+        builder->SetInsertPoint(from);
+        builder->CreateBr(target);
+    }
+}
+
+void Codegen::finalizeModule() {
+    if (!verifyIR || !mod) return;
+    std::string err;
+    llvm::raw_string_ostream os(err);
+    if (llvm::verifyModule(*mod, &os)) {
+        diag.error(0,0, std::string("IR invalido: ") + os.str());
+    }
+}
+
+// R2-22: Folding helpers
+bool Codegen::isConstTrue(llvm::Value* v) const {
+    if (auto* c = llvm::dyn_cast<llvm::ConstantInt>(v)) return !c->isZero();
+    return false;
+}
+bool Codegen::isConstFalse(llvm::Value* v) const {
+    if (auto* c = llvm::dyn_cast<llvm::ConstantInt>(v)) return c->isZero();
+    return false;
+}
+
+void Codegen::attachWeights(llvm::BranchInst* br, unsigned trueW, unsigned falseW) {
+    if (!br || !br->isConditional()) return;
+    llvm::MDBuilder mdb(ctx);
+    br->setMetadata(llvm::LLVMContext::MD_prof, mdb.createBranchWeights(trueW, falseW));
 }
 
 void Codegen::emitGlobals(Program* p) {
@@ -597,26 +642,8 @@ void Codegen::emitStmt(Stmt* s, Scope& scope) {
     if (auto dw  = dynamic_cast<DoWhileStmt*>(s)) { emitDoWhile(dw, scope); return; }
     if (auto fr  = dynamic_cast<ForStmt*>(s))   { emitFor(fr, scope); return; }
     if (auto sw  = dynamic_cast<SwitchStmt*>(s)) { emitSwitch(sw, scope); return; }
-    if (auto brk = dynamic_cast<BreakStmt*>(s)) {
-        if (!breakTargets.empty()) {
-            builder->CreateBr(breakTargets.back());
-        } else if (!loopStack.empty()) {
-            builder->CreateBr(loopStack.back().endBB);
-        } else {
-            diag.error(0,0, "codegen: 'break' fora de laco/switch");
-        }
-        return;
-    }
-    if (auto cont = dynamic_cast<ContinueStmt*>(s)) {
-        if (!continueTargets.empty()) {
-            builder->CreateBr(continueTargets.back());
-        } else if (!loopStack.empty()) {
-            builder->CreateBr(loopStack.back().stepBB);
-        } else {
-            diag.error(0,0, "codegen: 'continue' fora de laco");
-        }
-        return;
-    }
+    if (auto brk = dynamic_cast<BreakStmt*>(s)) { emitBreak(brk, scope); return; }
+    if (auto cont = dynamic_cast<ContinueStmt*>(s)) { emitContinue(cont, scope); return; }
     if (auto ft = dynamic_cast<FallthroughStmt*>(s)) {
         if (fallthroughTargets.empty()) { diag.error(0,0, "codegen: 'fallthrough' fora de case"); return; }
         builder->CreateBr(fallthroughTargets.back());
@@ -1068,9 +1095,9 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
                     }
                     // i++ e cond
                     llvm::Value* i1 = builder->CreateAdd(phiI, llvm::ConstantInt::get(i32, 1));
-                    llvm::Value* cond = builder->CreateICmpSLT(i1, nVec);
+                    llvm::Value* condVec = builder->CreateICmpSLT(i1, nVec);
                     phiI->addIncoming(i1, builder->GetInsertBlock());
-                    builder->CreateCondBr(cond, loopBB, exitBB);
+                    builder->CreateCondBr(condVec, loopBB, exitBB);
 
                     F->insert(F->end(), exitBB);
                     builder->SetInsertPoint(exitBB);
@@ -1078,51 +1105,119 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
                     F->insert(F->end(), bbSca);
                     builder->CreateBr(bbSca);
 
-                    // --- Tail escalar (0..tail-1) ---
+                    // --- Fallback escalar: aplica unroll x8 (R2-19) antes do tail ---
                     builder->SetInsertPoint(bbSca);
-                    llvm::Value* hasTail = builder->CreateICmpSGT(nTail, llvm::ConstantInt::get(i32, 0));
-                    auto* bbTail = llvm::BasicBlock::Create(ctx, "fill2d.tail", F);
+                    llvm::Value* zero = llvm::ConstantInt::get(i32, 0);
+                    llvm::Value* eight = llvm::ConstantInt::get(i32, 8);
+                    // nUnr8 = nTail / 8, tail8 = nTail % 8
+                    llvm::Value* nUnr8 = builder->CreateSDiv(nTail, eight, "nUnr8");
+                    llvm::Value* nTail8= builder->CreateSRem(nTail, eight, "tail8");
+                    llvm::Value* hasUnr= builder->CreateICmpSGT(nUnr8, zero);
+                    auto* bbUnr = llvm::BasicBlock::Create(ctx, "fill2d.unr", F);
+                    auto* bbSct = llvm::BasicBlock::Create(ctx, "fill2d.sca.tail");
+                    builder->CreateCondBr(hasUnr, bbUnr, bbSct);
+
+                    // Loop desenrolado i += 8
+                    builder->SetInsertPoint(bbUnr);
+                    auto* preBB2 = builder->GetInsertBlock();
+                    auto* loopBB2 = llvm::BasicBlock::Create(ctx, "fill2d.unr.loop", F);
+                    auto* exitBB2 = llvm::BasicBlock::Create(ctx, "fill2d.unr.exit");
+                    builder->CreateBr(loopBB2);
+                    builder->SetInsertPoint(loopBB2);
+                    llvm::PHINode* iu = builder->CreatePHI(i32, 2, "i");
+                    iu->addIncoming(zero, preBB2);
+                    for (int k=0;k<8;++k){
+                        llvm::Value* offk = builder->CreateAdd(iu, llvm::ConstantInt::get(i32, k));
+                        llvm::Value* p = builder->CreateInBoundsGEP(i32, tailBase, offk);
+                        builder->CreateStore(value, p);
+                    }
+                    llvm::Value* inext = builder->CreateAdd(iu, eight);
+                    llvm::Value* condUnr8  = builder->CreateICmpSLT(inext, builder->CreateMul(nUnr8, eight));
+                    iu->addIncoming(inext, builder->GetInsertBlock());
+                    builder->CreateCondBr(condUnr8, loopBB2, exitBB2);
+                    F->insert(F->end(), exitBB2);
+                    builder->SetInsertPoint(exitBB2);
+                    // Escalar final (tail <= 7)
+                    F->insert(F->end(), bbSct);
+                    builder->CreateBr(bbSct);
+                    builder->SetInsertPoint(bbSct);
+                    // tailBase2 = tailBase + 8*nUnr8 (dispõe do que foi escrito no unroll)
+                    llvm::Value* adv8 = builder->CreateMul(nUnr8, eight);
+                    llvm::Value* tailBase2 = builder->CreateInBoundsGEP(i32, tailBase, adv8, "tail8.base");
+                    llvm::Value* hasTail = builder->CreateICmpSGT(nTail8, zero);
+                    auto* bbTail = llvm::BasicBlock::Create(ctx, "fill2d.tail8", F);
                     auto* bbDone = llvm::BasicBlock::Create(ctx, "fill2d.after.line", F);
                     builder->CreateCondBr(hasTail, bbTail, bbDone);
-
                     builder->SetInsertPoint(bbTail);
                     llvm::PHINode* j = builder->CreatePHI(i32, 2, "j");
-                    j->addIncoming(llvm::ConstantInt::get(i32, 0), bbSca);
-                    llvm::Value* tPtr = builder->CreateInBoundsGEP(i32, tailBase, j);
+                    j->addIncoming(zero, bbSct);
+                    llvm::Value* tPtr = builder->CreateInBoundsGEP(i32, tailBase2, j);
                     builder->CreateStore(value, tPtr);
+                    llvm::Value* j1 = builder->CreateAdd(j, llvm::ConstantInt::get(i32, 1));
+                    llvm::Value* jt = builder->CreateICmpSLT(j1, nTail8);
+                    j->addIncoming(j1, builder->GetInsertBlock());
+                    builder->CreateCondBr(jt, bbTail, bbDone);
+                    builder->SetInsertPoint(bbDone);
+                    builder->CreateBr(rInc);
+                } else {
+                    // R2-19: fallback escalar com unroll x8
+                    llvm::Value* zero = llvm::ConstantInt::get(i32, 0);
+                    llvm::Value* eight = llvm::ConstantInt::get(i32, 8);
+                    // Base da linha já computada: rowBasePtr
+                    llvm::Value* nUnr = builder->CreateSDiv(cols, eight, "nUnr");
+                    llvm::Value* nTail= builder->CreateSRem(cols, eight, "tail8");
+                    // tailBase = rowBasePtr + 8*nUnr (mesmo se nUnr==0)
+                    llvm::Value* advElems8 = builder->CreateMul(nUnr, eight);
+                    llvm::Value* tailBase  = builder->CreateInBoundsGEP(i32, rowBasePtr, advElems8, "tail8.base");
+                    bool wantUnroll = (unroll2DMode == Unroll2DMode::Always) || (unroll2DMode == Unroll2DMode::Auto);
+                    if (wantUnroll) {
+                        llvm::Value* hasUnr = builder->CreateICmpSGT(nUnr, zero);
+                        auto* bbUnr = llvm::BasicBlock::Create(ctx, "fill2d.unr", F);
+                        auto* bbSca = llvm::BasicBlock::Create(ctx, "fill2d.sca.tail");
+                        builder->CreateCondBr(hasUnr, bbUnr, bbSca);
+
+                        // Loop i += 8 com 8 stores
+                        builder->SetInsertPoint(bbUnr);
+                        auto* preBB = builder->GetInsertBlock();
+                        auto* loopBB = llvm::BasicBlock::Create(ctx, "fill2d.unr.loop", F);
+                        auto* exitBB = llvm::BasicBlock::Create(ctx, "fill2d.unr.exit");
+                        builder->CreateBr(loopBB);
+                        builder->SetInsertPoint(loopBB);
+                        llvm::PHINode* i = builder->CreatePHI(i32, 2, "i");
+                        i->addIncoming(zero, preBB);
+                        for (int k=0;k<8;++k){
+                            llvm::Value* offk = builder->CreateAdd(i, llvm::ConstantInt::get(i32, k));
+                            llvm::Value* p = builder->CreateInBoundsGEP(i32, rowBasePtr, offk);
+                            builder->CreateStore(value, p);
+                        }
+                        llvm::Value* inext = builder->CreateAdd(i, eight);
+                        llvm::Value* condUnr = builder->CreateICmpSLT(inext, builder->CreateMul(nUnr, eight));
+                        i->addIncoming(inext, builder->GetInsertBlock());
+                        builder->CreateCondBr(condUnr, loopBB, exitBB);
+                        F->insert(F->end(), exitBB);
+                        builder->SetInsertPoint(exitBB);
+                        // segue para tail
+                        F->insert(F->end(), bbSca);
+                        builder->CreateBr(bbSca);
+                        builder->SetInsertPoint(bbSca);
+                    }
+
+                    // Tail escalar: j = 0..nTail-1
+                    llvm::Value* hasTail = builder->CreateICmpSGT(nTail, zero);
+                    auto* bbTail = llvm::BasicBlock::Create(ctx, "fill2d.tail8", F);
+                    auto* bbDone = llvm::BasicBlock::Create(ctx, "fill2d.after.line", F);
+                    builder->CreateCondBr(hasTail, bbTail, bbDone);
+                    builder->SetInsertPoint(bbTail);
+                    llvm::PHINode* j = builder->CreatePHI(i32, 2, "j");
+                    j->addIncoming(zero, builder->GetInsertBlock()->getPrevNode());
+                    llvm::Value* p = builder->CreateInBoundsGEP(i32, tailBase, j);
+                    builder->CreateStore(value, p);
                     llvm::Value* j1 = builder->CreateAdd(j, llvm::ConstantInt::get(i32, 1));
                     llvm::Value* jt = builder->CreateICmpSLT(j1, nTail);
                     j->addIncoming(j1, builder->GetInsertBlock());
                     builder->CreateCondBr(jt, bbTail, bbDone);
-
                     builder->SetInsertPoint(bbDone);
                     builder->CreateBr(rInc);
-                } else {
-                    // fallback: laço escalar por coluna
-                    auto* cCond = llvm::BasicBlock::Create(ctx, "fill2d.c.cond", F);
-                    auto* cBody = llvm::BasicBlock::Create(ctx, "fill2d.c.body");
-                    auto* cInc  = llvm::BasicBlock::Create(ctx, "fill2d.c.inc");
-                    llvm::AllocaInst* cVar = createEntryAlloca(F, i32, "c");
-                    builder->CreateStore(llvm::ConstantInt::get(i32, 0), cVar);
-                    builder->CreateBr(cCond);
-
-                    builder->SetInsertPoint(cCond);
-                    llvm::Value* cVal = builder->CreateLoad(i32, cVar, "c.val");
-                    llvm::Value* cCmp = builder->CreateICmpSLT(cVal, cols);
-                    builder->CreateCondBr(cCmp, cBody, rInc);
-
-                    F->insert(F->end(), cBody);
-                    builder->SetInsertPoint(cBody);
-                    llvm::Value* off  = builder->CreateAdd(dstLineOff, cVal);
-                    llvm::Value* dstPtr = gepElem(dstS, off, "fill2d.dst.ptr");
-                    builder->CreateStore(value, dstPtr);
-
-                    builder->CreateBr(cInc);
-                    F->insert(F->end(), cInc);
-                    builder->SetInsertPoint(cInc);
-                    llvm::Value* cNext = builder->CreateAdd(cVal, llvm::ConstantInt::get(i32, 1));
-                    builder->CreateStore(cNext, cVar);
-                    builder->CreateBr(cCond);
                 }
             }
 
@@ -1353,27 +1448,36 @@ llvm::Value* Codegen::emitStringLiteral(const std::string& s) {
 
 void Codegen::emitIf(IfStmt* s, Scope& scope) {
     setLoc(s->loc);
-    llvm::Function* F = builder->GetInsertBlock()->getParent();
+    llvm::Function* F = currentFunction();
 
-    auto* thenBB  = llvm::BasicBlock::Create(ctx, "if.then", F);
-    auto* elseBB  = llvm::BasicBlock::Create(ctx, "if.else");
-    auto* mergeBB = llvm::BasicBlock::Create(ctx, "if.end");
+    // Normaliza condição para i1 e tenta folding
+    llvm::Value* condV = toBool(emitExpr(s->cond.get(), scope));
+    if (isConstTrue(condV)) {
+        emitBlock(s->thenBlk.get(), scope);
+        return;
+    }
+    if (isConstFalse(condV)) {
+        if (s->elseBlk) emitBlock(s->elseBlk.get(), scope);
+        return;
+    }
 
-    llvm::Value* cond = toBool(emitExpr(s->cond.get(), scope));
-    builder->CreateCondBr(cond, thenBB, s->elseBlk ? elseBB : mergeBB);
+    auto* thenBB  = createBlock("if.then", F);
+    auto* elseBB  = s->elseBlk ? createBlock("if.else", F) : nullptr;
+    auto* mergeBB = createBlock("if.merge", F);
+
+    auto* br = builder->CreateCondBr(condV, thenBB, elseBB ? elseBB : mergeBB);
+    attachWeights(br, 8, 8);
 
     builder->SetInsertPoint(thenBB);
     emitBlock(s->thenBlk.get(), scope);
-    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(mergeBB);
+    ensureTerminatorOrBranchTo(thenBB, mergeBB);
 
-    if (s->elseBlk) {
-        F->insert(F->end(), elseBB);
+    if (elseBB) {
         builder->SetInsertPoint(elseBB);
         emitBlock(s->elseBlk.get(), scope);
-        if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(mergeBB);
+        ensureTerminatorOrBranchTo(elseBB, mergeBB);
     }
 
-    F->insert(F->end(), mergeBB);
     builder->SetInsertPoint(mergeBB);
 }
 
@@ -1413,34 +1517,52 @@ llvm::Value* Codegen::linearizeOffset(const std::vector<int>& dims,
 
 void Codegen::emitWhile(WhileStmt* s, Scope& scope) {
     setLoc(s->loc);
-    llvm::Function* F = builder->GetInsertBlock()->getParent();
+    llvm::Function* F = currentFunction();
 
-    auto* condBB = llvm::BasicBlock::Create(ctx, "while.cond", F);
-    auto* bodyBB = llvm::BasicBlock::Create(ctx, "while.body");
-    auto* endBB  = llvm::BasicBlock::Create(ctx, "while.end");
+    auto* condBB = createBlock("while.cond", F);
+    auto* bodyBB = createBlock("while.body", F);
+    auto* endBB  = createBlock("while.end",  F);
 
     builder->CreateBr(condBB);
 
-    loopStack.push_back({condBB, condBB, endBB});
-
     builder->SetInsertPoint(condBB);
     llvm::Value* cond = toBool(emitExpr(s->cond.get(), scope));
-    builder->CreateCondBr(cond, bodyBB, endBB);
+    if (isConstFalse(cond)) {
+        builder->CreateBr(endBB);
+        builder->SetInsertPoint(endBB);
+        return;
+    }
+    auto* cbr = builder->CreateCondBr(cond, bodyBB, endBB);
+    attachWeights(cbr, 8, 8);
 
-    F->insert(F->end(), bodyBB);
     builder->SetInsertPoint(bodyBB);
     // R2-03/04: permitir break/continue dentro do while
-    breakTargets.push_back(endBB);
-    continueTargets.push_back(condBB);
+    loopStack.push_back({condBB, /*stepBB*/condBB, endBB});
     emitBlock(s->body.get(), scope);
-    continueTargets.pop_back();
-    breakTargets.pop_back();
-    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(condBB);
-
     loopStack.pop_back();
+    ensureTerminatorOrBranchTo(builder->GetInsertBlock(), condBB);
 
-    F->insert(F->end(), endBB);
     builder->SetInsertPoint(endBB);
+}
+
+// R2-22: emissores explicitos de break/continue
+void Codegen::emitBreak(BreakStmt* s, Scope& scope) {
+    (void)scope;
+    if (!loopStack.empty()) {
+        builder->CreateBr(loopStack.back().endBB);
+        return;
+    }
+    if (!breakTargets.empty()) { builder->CreateBr(breakTargets.back()); return; }
+    diag.error(0,0, "codegen: 'break' fora de laco/switch");
+}
+void Codegen::emitContinue(ContinueStmt* s, Scope& scope) {
+    (void)scope;
+    if (!loopStack.empty()) {
+        builder->CreateBr(loopStack.back().condBB);
+        return;
+    }
+    if (!continueTargets.empty()) { builder->CreateBr(continueTargets.back()); return; }
+    diag.error(0,0, "codegen: 'continue' fora de laco");
 }
 
 void Codegen::emitDoWhile(DoWhileStmt* s, Scope& scope) {

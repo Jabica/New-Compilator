@@ -1,0 +1,5 @@
+funcao main(): inteiro {
+  variavel x: inteiro; x = 5;
+  enquanto (falso) { x = x + 1; }
+  retorna x;
+}

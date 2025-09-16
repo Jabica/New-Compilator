@@ -1,0 +1,3 @@
+funcao main(): inteiro {
+  se (verdadeiro) { retorna 7; } senao { retorna 0; }
+}

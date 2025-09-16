@@ -1,0 +1,12 @@
+funcao main(): inteiro {
+  variavel i: inteiro;
+  i = 0;
+  enquanto (i < 5) {
+    se (i == 3) {
+      retorna 99;
+    }
+    i = i + 1;
+  }
+  retorna 0;
+}
+

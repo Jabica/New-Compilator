@@ -1,0 +1,5 @@
+funcao principal(): inteiro {
+    x = 1;            // x nao foi declarado
+    retorna 0;
+}
+

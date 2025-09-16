@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(mycc-pt VERSION 0.1 LANGUAGES C CXX)
 
+if (NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
 # Passa caminhos de origem e build para o executável (usado pelo --emit-exe)
 add_compile_definitions(MYCC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_compile_definitions(MYCC_BUILD_DIR="${CMAKE_BINARY_DIR}")
@@ -85,3 +88,11 @@ install(TARGETS mycc mycc_cli
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
+
+# Instala exemplos e scripts da A3
+install(DIRECTORY examples/ DESTINATION share/mycc-pt/examples FILES_MATCHING PATTERN "*.my")
+install(DIRECTORY examples_invalid/ DESTINATION share/mycc-pt/examples_invalid FILES_MATCHING PATTERN "*.my")
+install(DIRECTORY scripts/ DESTINATION share/mycc-pt/scripts FILES_MATCHING PATTERN "run_a3_*.sh")
+
+# Instala documentação
+install(FILES docs/guia.md DESTINATION share/mycc-pt)

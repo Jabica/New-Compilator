@@ -1,0 +1,9 @@
+funcao soma(a: inteiro, b: inteiro): inteiro { retorna a + b; }
+funcao main(): inteiro {
+  variavel x: inteiro = 7;
+  variavel y: inteiro = 35;
+  variavel r: inteiro = soma(x, y); // 42
+  printi(r);
+  retorna r;
+}
+

@@ -1,0 +1,4 @@
+funcao soma(a: inteiro, b: inteiro): inteiro { retorna a + b; }
+funcao soma(a: inteiro, b: inteiro): inteiro { retorna a + b; } // redeclaracao
+funcao principal(): inteiro { retorna soma(1,2); }
+

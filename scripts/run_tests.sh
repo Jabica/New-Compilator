@@ -86,6 +86,8 @@ MUST_PASS=(
   "$ROOT/tests/26_fill2d_zero_ok.my"
   "$ROOT/tests/29_fill2d_vec4_ok.my"
   "$ROOT/tests/30_fill2d_vec4_tail_ok.my"
+  "$ROOT/tests/31_fill2d_unroll8_ok.my"
+  "$ROOT/tests/32_fill2d_unroll8_tail_ok.my"
 
 )
 MUST_FAIL=(
@@ -481,6 +483,12 @@ if [[ -x "$ROOT/scripts/run_view_smartcopy_tests.sh" ]]; then
   "$ROOT/scripts/run_view_smartcopy_tests.sh" || true
 fi
 
+# --- Smoke unroll2d (fill2d escalar x8) ---
+if [[ -x "$ROOT/scripts/run_unroll2d_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_unroll2d_tests.sh" || true
+fi
+
 # --- Smoke vec2d (fill2d vetorizado) ---
 if [[ -x "$ROOT/scripts/run_vec2d_tests.sh" ]]; then
   echo
@@ -491,6 +499,36 @@ fi
 if [[ -x "$ROOT/scripts/run_fast2d_tests.sh" ]]; then
   echo
   "$ROOT/scripts/run_fast2d_tests.sh" || true
+fi
+
+# --- Smoke controle de fluxo + verify ---
+if [[ -x "$ROOT/scripts/run_ctrlflow_verify.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_ctrlflow_verify.sh" || true
+fi
+
+# --- Smokes R2-22: folding/pesos e break/continue (exec) ---
+if [[ -x "$ROOT/scripts/run_cf_branch_smoke.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_cf_branch_smoke.sh" || true
+fi
+
+# Execuções de 45/46 (valores de retorno via executável)
+exe45="/tmp/t45_bc"
+"$BIN" --emit-exe -o "$exe45" "$ROOT/tests/45_break_continue_ok.my" >/dev/null 2>&1 || true
+if [[ -x "$exe45" ]]; then
+  "$exe45" >/dev/null 2>&1; rc=$?
+  [[ $rc -eq 25 ]] || echo "❌ FAIL: 45_break_continue_ok (rc=$rc)"
+else
+  echo "❌ FAIL: 45_break_continue_ok (sem executavel)"
+fi
+exe46="/tmp/t46_bc"
+"$BIN" --emit-exe -o "$exe46" "$ROOT/tests/46_nested_break_continue_ok.my" >/dev/null 2>&1 || true
+if [[ -x "$exe46" ]]; then
+  "$exe46" >/dev/null 2>&1; rc=$?
+  [[ $rc -eq 8 ]] || echo "❌ FAIL: 46_nested_break_continue_ok (rc=$rc)"
+else
+  echo "❌ FAIL: 46_nested_break_continue_ok (sem executavel)"
 fi
 
 [[ $fail -eq 0 ]] || exit 1
