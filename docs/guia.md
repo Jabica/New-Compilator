@@ -1,8 +1,8 @@
-# Guia Completo — mycc-pt
+# Guia Completo — mycc-pt (A3)
 
 Este guia descreve como instalar, compilar e usar o compilador educacional mycc-pt, detalha cada flag do CLI, os conceitos da linguagem, e explica a base utilizada para os testes automatizados.
 
-Versão atual: 0.1
+Versão atual: 0.1 — `mycc_cli --version` imprime algo como `mycc-pt v0.1.0 (R2-A3)`
 
 —
 
@@ -18,7 +18,7 @@ macOS (Apple Silicon):
 ```bash
 xcode-select --install
 brew install llvm cmake ninja
-./scripts/rebuild.sh
+./scripts/rebuild.sh   # detecta automaticamente o LLVM_DIR via llvm-config
 ```
 O script detecta o `LLVM_DIR` via `llvm-config` do Homebrew (`/opt/homebrew/opt/llvm/bin/llvm-config`).
 
@@ -87,6 +87,14 @@ Conversões implícitas (escalares):
 
 Built‑ins:
 - `printi(inteiro)`, `printb(logico)`, `prints(texto)`
+
+Otimizações 2D e CF (highlights):
+- `--fast2d=<off|auto|always>`: `copy2d` com fast‑path contíguo (um único `llvm.memcpy` quando o retângulo é contíguo). Caso contrário, memcpy por linha.
+- `--vec2d=<off|auto|always>`: `fill2d(value!=0)` vetorizado `<4 x i32>` por linha; tail escalar.
+- `--unroll2d=<off|auto|always>`: fallback escalar desenrolado em passos de 8 (×8) + tail.
+- `--verify-ir`: pede verificação do IR (também existem smokes de `opt -verify`).
+- Folding conservador: `se(const)` elimina ramo impossível; `enquanto(false)` não entra no laço. Branch weights básicos (MD_prof) são aplicados aos `condbr`.
+- `break/continue` (também `quebra/continua`) em `enquanto` têm suporte.
 
 —
 
@@ -230,6 +238,49 @@ Scripts auxiliares:
 —
 
 ## 7) Limitações Atuais
+
+—
+
+## 8) A3 — Exemplos, Scripts e Empacotamento
+
+Exemplos (válidos):
+- `examples/01_hello.my` → imprime 123
+- `examples/02_soma_funcoes.my` → soma 7+35=42
+- `examples/03_fatorial_iter.my` → fatorial(5)=120
+- `examples/04_fibonacci_iter.my` → fib(10)=55
+- `examples/05_io_soma.my` → soma determinística 10+32=42
+
+Exemplos (inválidos):
+- `examples_invalid/01_var_undeclared_err.my` → variável não declarada
+- `examples_invalid/02_break_outside_loop_err.my` → `quebra` fora de laço
+- `examples_invalid/03_redeclare_function_err.my` → função redeclarada
+- `examples_invalid/04_call_arity_mismatch_err.my` → aridade incorreta
+- `examples_invalid/05_return_type_mismatch_err.my` → retorno sem valor em função inteira
+
+Scripts A3:
+- `./scripts/run_a3_demo.sh` — build + executa os 5 válidos com `--emit-exe` e verifica stdout
+- `./scripts/run_a3_invalids.sh` — valida 5 inválidos procurando substrings robustas nas mensagens
+- `./scripts/run_a3_all.sh` — roda os dois anteriores em sequência
+- `./scripts/run_a3_finalize.sh` — checklist final (ambiente, build, all, help/version, goldens, verifier) + empacote `dist/mycc-pt-a3.tar.gz`
+
+Checklist rápido (15–20 min):
+```bash
+rm -rf build && cmake -S . -B build -G Ninja ${LLVM_DIR:+-DLLVM_DIR="$LLVM_DIR"}
+cmake --build build --config Release
+./scripts/run_a3_all.sh
+./build/mycc_cli --help | grep -E -- "--version|--parse-only|--dump-ast|--dump-ir|--emit-ll|--run|--verify-ir|--fast2d=|--vec2d=|--unroll2d="
+./build/mycc_cli --version
+mkdir -p goldens
+./build/mycc_cli --dump-ast examples/02_soma_funcoes.my > goldens/02.ast.txt
+./build/mycc_cli --dump-ir  examples/02_soma_funcoes.my > goldens/02.ir.txt
+./scripts/run_a3_finalize.sh
+```
+
+Apresentação sugerida (3–5 min):
+- `--version` e `--help`
+- `./scripts/run_a3_all.sh` (resumos de válidos/invalidos)
+- `--dump-ast` e `--dump-ir` de `examples/02_soma_funcoes.my`
+- Limitações e demonstração do pacote `dist/mycc-pt-a3.tar.gz`
 
 - Vetores apenas 1D; sem strings dinâmicas nem operações gerais entre `texto` (além de `prints`).
 - Sem retorno de arrays por valor.

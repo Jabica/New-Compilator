@@ -6,6 +6,9 @@ Um compilador didático que implementa uma linguagem pequena (tipos inteiros, l�
 - Binário: `build/mycc_cli`
 - Bibliotecas: `build/libmycc.a` (core) e `build/libmycc_runtime.a` (runtime para linkedição)
 
+Versão do CLI:
+- `./build/mycc_cli --version` → exibe algo como `mycc-pt v0.1.0 (R2-A3)`
+
 ## Visão Geral
 
 - Front-end completo: léxico, parser, AST e checagens semânticas (escopos, tipos, retorno, arrays, conversões válidas, etc.).
@@ -14,6 +17,17 @@ Um compilador didático que implementa uma linguagem pequena (tipos inteiros, l�
 - Debug info: `-g/--debug` emite DWARF em `.ll`, `.o`, `.s`.
 - Sanitizers (educacional): `--ubsan` injeta checagens de divisão por zero no IR; `--asan` reservado.
 - Alvos: `--target=<triple>` para escolher triple (ex.: `aarch64-apple-darwin`, `x86_64-apple-darwin`).
+
+Otimizações 2D (R2-17…R2-19):
+- `--fast2d=<off|auto|always>`: copia 2D com fast‑path contíguo (um único `llvm.memcpy` quando `cols==stride` e índices alinhados). Fallback: memcpy por linha.
+- `--vec2d=<off|auto|always>`: `fill2d(value!=0)` vetorizado `<4 x i32>` por linha (splat + stores vetoriais). Fallback: escalar.
+- `--unroll2d=<off|auto|always>`: unroll escalar ×8 no fallback de `fill2d`, com tail.
+
+Robustez de controle de fluxo (R2-21) e folding (R2-22):
+- Terminadores garantidos (br/ret) e blocos de merge consistentes em `se/senao` e `enquanto`.
+- `--verify-ir` roda o verificador LLVM no módulo gerado.
+- Folding conservador: `se(const)` elimina ramo impossível; `enquanto(false)` vira no‑op. Branch weights (MD_prof) básicos são aplicados em `condbr`.
+- `break`/`continue` em `enquanto` são suportados (com `quebra`/`continua`).
 
 ## Requisitos
 
@@ -51,6 +65,13 @@ Artefatos ficam em `build/`.
 Dicas:
 - Para `--run`, garanta `lli` no PATH (ex.: `export PATH="$(llvm-config --bindir):$PATH"`).
 - Em macOS, `--emit-exe` usa `xcrun` para detectar o SDK e define `-mmacosx-version-min=15.0` (ajustado no CMake).
+
+Instalação (opcional):
+```bash
+sudo cmake --install build
+# Binário: /usr/local/bin/mycc_cli (ou conforme CMAKE_INSTALL_PREFIX)
+# Recursos: /usr/local/share/mycc-pt/ (examples, scripts A3, docs)
+```
 
 ## Uso Rápido
 
@@ -135,6 +156,15 @@ Scripts úteis:
 - `./scripts/run_tests.sh` — roda a suíte principal (casos que devem passar/falhar + smokes de emissão/otimização/alvo/debug).
 - Smokes adicionais: `run_opt_tests.sh`, `run_target_tests.sh`, `run_bc_asm_tests.sh`, `run_debug_tests.sh`, `run_loc_tests.sh`.
 
+Suite A3 (exemplos e entrega):
+- Válidos: `examples/01_hello.my` … `05_io_soma.my`
+- Inválidos: `examples_invalid/01_*.my` … `05_*.my`
+- Scripts:
+  - `./scripts/run_a3_demo.sh` → compila com `--emit-exe` e valida o stdout (5/5 válidos)
+  - `./scripts/run_a3_invalids.sh` → valida 5 inválidos (erros semânticos esperados)
+  - `./scripts/run_a3_all.sh` → executa válidos + inválidos, com resumos
+  - `./scripts/run_a3_finalize.sh` → checklist final + pacote `dist/mycc-pt-a3.tar.gz`
+
 Pré‑requisitos dos testes:
 - `lli` no PATH para `--run` (o script tenta ajustar via `llvm-config`).
 - `clang` disponível para os testes de `--emit-exe`.
@@ -154,6 +184,7 @@ Pré‑requisitos dos testes:
 - `scripts/` — build e runners de testes.
 - `CMakeLists.txt` — build com `find_package(LLVM CONFIG)`.
 - `docs/guia.md` — anotações rápidas (WIP).
+  - Guia completo para A3 (build, uso, exemplos, scripts e empacotamento)
 
 ## Limitações Atuais
 
@@ -165,4 +196,3 @@ Pré‑requisitos dos testes:
 ---
 
 Sinta‑se à vontade para abrir issues/sugestões. Bom estudo e bons hacks no LLVM!
-
