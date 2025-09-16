@@ -84,6 +84,8 @@ MUST_PASS=(
   "$ROOT/tests/24_fill2d_ok.my"
   "$ROOT/tests/25_copy2d_rowwide_ok.my"
   "$ROOT/tests/26_fill2d_zero_ok.my"
+  "$ROOT/tests/29_fill2d_vec4_ok.my"
+  "$ROOT/tests/30_fill2d_vec4_tail_ok.my"
 
 )
 MUST_FAIL=(
@@ -477,6 +479,18 @@ fi
 if [[ -x "$ROOT/scripts/run_view_smartcopy_tests.sh" ]]; then
   echo
   "$ROOT/scripts/run_view_smartcopy_tests.sh" || true
+fi
+
+# --- Smoke vec2d (fill2d vetorizado) ---
+if [[ -x "$ROOT/scripts/run_vec2d_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_vec2d_tests.sh" || true
+fi
+
+# --- Smoke fast2d (contiguous) ---
+if [[ -x "$ROOT/scripts/run_fast2d_tests.sh" ]]; then
+  echo
+  "$ROOT/scripts/run_fast2d_tests.sh" || true
 fi
 
 [[ $fail -eq 0 ]] || exit 1

@@ -17,8 +17,10 @@ namespace mycc {
 class Codegen {
 public:
     enum class Fast2DMode { Off, Auto, Always };
+    enum class Vec2DMode  { Off, Auto, Always };
     Codegen(std::string moduleName, Diag& d, bool enableDebug = false, const std::string& srcPath = "", bool ubsanEnabled = false, bool asanEnabled = false);
     void setFast2DMode(Fast2DMode m) { fast2DMode = m; }
+    void setVec2DMode(Vec2DMode m)   { vec2DMode  = m; }
     // Gera IR para um Programa. Retorna ponteiro para Module pronto.
     std::unique_ptr<llvm::Module> run(Program* prog);
 
@@ -151,6 +153,7 @@ private:
 
     // R2-17: modo de fast-path 2D
     Fast2DMode fast2DMode = Fast2DMode::Auto;
+    Vec2DMode  vec2DMode  = Vec2DMode::Auto;
 };
 
 } // namespace mycc

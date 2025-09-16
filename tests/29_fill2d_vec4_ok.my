@@ -1,0 +1,14 @@
+funcao main(): inteiro {
+  variavel a: inteiro[16];
+  // Preenche 4x4 com valor 3
+  fill2d(a, 4, 0, 3, 4, 4);
+
+  variavel s: inteiro; s = 0;
+  variavel i: inteiro; i = 0;
+  enquanto (i < 16) {
+    s = s + a[i];
+    i = i + 1;
+  }
+  retorna s; // 16*3 = 48
+}
+

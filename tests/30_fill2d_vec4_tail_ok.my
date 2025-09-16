@@ -1,0 +1,14 @@
+funcao main(): inteiro {
+  variavel a: inteiro[10]; // 2x5
+  // Preenche duas linhas completas com valor 2
+  fill2d(a, 5, 0, 2, 5, 2);
+
+  variavel s: inteiro; s = 0;
+  variavel i: inteiro; i = 0;
+  enquanto (i < 10) {
+    s = s + a[i];
+    i = i + 1;
+  }
+  retorna s; // 10*2 = 20
+}
+

@@ -765,6 +765,66 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
                 llvm::Value* cond2 = builder->CreateAnd(dstAligned, srcAligned);
                 llvm::Value* contiguous = builder->CreateAnd(cond1, cond2);
 
+                // Se a condição é constante em tempo de compilação, evite gerar o caminho alternativo
+                if (auto C = llvm::dyn_cast<llvm::ConstantInt>(contiguous)) {
+                    if (C->isOne()) {
+                        // Somente caminho contíguo
+                        llvm::Value* dstBasePtr = gepElem(dstS, dstIdx, "copy2d.dst.base");
+                        llvm::Value* srcBasePtr = gepElem(srcS, srcIdx, "copy2d.src.base");
+                        llvm::Value* dstI8 = builder->CreateBitCast(dstBasePtr, i8p);
+                        llvm::Value* srcI8 = builder->CreateBitCast(srcBasePtr, i8p);
+                        llvm::Value* elems = builder->CreateMul(rows, cols);
+                        llvm::Value* bytes32 = builder->CreateMul(elems, llvm::ConstantInt::get(i32, 4));
+                        llvm::Value* bytes64 = builder->CreateZExt(bytes32, i64);
+                        auto align4 = llvm::MaybeAlign(4);
+                        builder->CreateMemCpy(dstI8, align4, srcI8, align4, bytes64);
+                        return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                    } else {
+                        // Somente fallback por linha (gera apenas esse caminho)
+                        auto* rCond = llvm::BasicBlock::Create(ctx, "copy2d.r.cond", F);
+                        auto* rBody = llvm::BasicBlock::Create(ctx, "copy2d.r.body");
+                        auto* rInc  = llvm::BasicBlock::Create(ctx, "copy2d.r.inc");
+                        auto* rEnd  = llvm::BasicBlock::Create(ctx, "copy2d.after");
+
+                        // r = 0
+                        llvm::AllocaInst* rVar = createEntryAlloca(F, i32, "r");
+                        builder->CreateStore(llvm::ConstantInt::get(i32, 0), rVar);
+                        builder->CreateBr(rCond);
+
+                        F->insert(F->end(), rCond);
+                        builder->SetInsertPoint(rCond);
+                        llvm::Value* rVal = builder->CreateLoad(i32, rVar, "r.val");
+                        llvm::Value* rCmp = builder->CreateICmpSLT(rVal, rows);
+                        builder->CreateCondBr(rCmp, rBody, rEnd);
+
+                        // r body: memcpy por linha
+                        F->insert(F->end(), rBody);
+                        builder->SetInsertPoint(rBody);
+                        llvm::Value* rMulDst = builder->CreateMul(rVal, dstStride);
+                        llvm::Value* dstLineOff = builder->CreateAdd(dstIdx, rMulDst);
+                        llvm::Value* rMulSrc = builder->CreateMul(rVal, srcStride);
+                        llvm::Value* srcLineOff = builder->CreateAdd(srcIdx, rMulSrc);
+                        llvm::Value* dstLinePtr = gepElem(dstS, dstLineOff, "copy2d.dst.line.ptr");
+                        llvm::Value* srcLinePtr = gepElem(srcS, srcLineOff, "copy2d.src.line.ptr");
+                        llvm::Value* dstI8L = builder->CreateBitCast(dstLinePtr, i8p);
+                        llvm::Value* srcI8L = builder->CreateBitCast(srcLinePtr, i8p);
+                        llvm::Value* bytes32L = builder->CreateMul(cols, llvm::ConstantInt::get(i32, 4));
+                        llvm::Value* bytes64L = builder->CreateZExt(bytes32L, i64);
+                        builder->CreateMemCpy(dstI8L, llvm::MaybeAlign(4), srcI8L, llvm::MaybeAlign(4), bytes64L);
+                        builder->CreateBr(rInc);
+
+                        F->insert(F->end(), rInc);
+                        builder->SetInsertPoint(rInc);
+                        llvm::Value* rNext = builder->CreateAdd(rVal, llvm::ConstantInt::get(i32, 1));
+                        builder->CreateStore(rNext, rVar);
+                        builder->CreateBr(rCond);
+
+                        F->insert(F->end(), rEnd);
+                        builder->SetInsertPoint(rEnd);
+                        return ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                    }
+                }
+
                 auto* bbContig = llvm::BasicBlock::Create(ctx, "copy2d.contig", F);
                 auto* bbRow    = llvm::BasicBlock::Create(ctx, "copy2d.row");
                 auto* bbEnd    = llvm::BasicBlock::Create(ctx, "copy2d.end");
@@ -954,33 +1014,116 @@ Value* Codegen::emitExpr(Expr* e, Scope& scope) {
                 builder->CreateMemSet(dstI8, llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), 0), bytes64, align4);
                 builder->CreateBr(rInc);
             } else {
-                // fallback: laço por coluna
-                auto* cCond = llvm::BasicBlock::Create(ctx, "fill2d.c.cond", F);
-                auto* cBody = llvm::BasicBlock::Create(ctx, "fill2d.c.body");
-                auto* cInc  = llvm::BasicBlock::Create(ctx, "fill2d.c.inc");
-                llvm::AllocaInst* cVar = createEntryAlloca(F, i32, "c");
-                builder->CreateStore(llvm::ConstantInt::get(i32, 0), cVar);
-                builder->CreateBr(cCond);
+                // R2-18: vetorização leve 4xi32 quando habilitado/seguro
+                auto* i64 = llvm::Type::getInt64Ty(ctx);
+                auto* v4i32 = llvm::FixedVectorType::get(i32, 4);
+                llvm::MaybeAlign A4(4);
 
-                builder->SetInsertPoint(cCond);
-                llvm::Value* cVal = builder->CreateLoad(i32, cVar, "c.val");
-                llvm::Value* cCmp = builder->CreateICmpSLT(cVal, cols);
-                builder->CreateCondBr(cCmp, cBody, rInc);
-
-                F->insert(F->end(), cBody);
-                builder->SetInsertPoint(cBody);
+                // Ponteiro base da linha (i32*) = &dst[dstIdx + r*dstStride]
                 llvm::Value* rMul = builder->CreateMul(rVal, dstStride);
-                llvm::Value* off  = builder->CreateAdd(dstIdx, rMul);
-                off               = builder->CreateAdd(off, cVal);
-                llvm::Value* dstPtr = gepElem(dstS, off, "fill2d.dst.ptr");
-                builder->CreateStore(value, dstPtr);
+                llvm::Value* dstLineOff = builder->CreateAdd(dstIdx, rMul);
+                llvm::Value* rowBasePtr = gepElem(dstS, dstLineOff, "fill2d.dst.line.ptr");
 
-                builder->CreateBr(cInc);
-                F->insert(F->end(), cInc);
-                builder->SetInsertPoint(cInc);
-                llvm::Value* cNext = builder->CreateAdd(cVal, llvm::ConstantInt::get(i32, 1));
-                builder->CreateStore(cNext, cVar);
-                builder->CreateBr(cCond);
+                bool tryVec = (vec2DMode == Vec2DMode::Always) || (vec2DMode == Vec2DMode::Auto);
+                if (tryVec) {
+                    // nVec = cols / 4, tail = cols % 4
+                    llvm::Value* four = llvm::ConstantInt::get(i32, 4);
+                    llvm::Value* nVec  = builder->CreateSDiv(cols, four, "nVec");
+                    llvm::Value* nTail = builder->CreateSRem(cols, four, "tail");
+                    // tailBase = rowBasePtr + 4*nVec (vale mesmo se nVec==0)
+                    llvm::Value* advElems = builder->CreateMul(nVec, four);
+                    llvm::Value* tailBase = builder->CreateInBoundsGEP(i32, rowBasePtr, advElems, "tail.base");
+
+                    llvm::Value* hasVec = builder->CreateICmpSGT(nVec, llvm::ConstantInt::get(i32, 0));
+
+                    auto* bbVec = llvm::BasicBlock::Create(ctx, "fill2d.vec", F);
+                    auto* bbSca = llvm::BasicBlock::Create(ctx, "fill2d.sca");
+                    builder->CreateCondBr(hasVec, bbVec, bbSca);
+
+                    // --- Loop vetorizado ---
+                    builder->SetInsertPoint(bbVec);
+                    // Splat de value para <4 x i32>
+                    llvm::Value* VV = llvm::UndefValue::get(v4i32);
+                    VV = builder->CreateInsertElement(VV, value, (uint64_t)0);
+                    llvm::Value* mask0 = llvm::ConstantVector::getSplat(
+                        llvm::ElementCount::getFixed(4), llvm::ConstantInt::get(i32, 0));
+                    VV = builder->CreateShuffleVector(VV, llvm::UndefValue::get(v4i32), mask0);
+
+                    // i = 0..nVec-1
+                    auto* preBB = builder->GetInsertBlock();
+                    auto* loopBB = llvm::BasicBlock::Create(ctx, "fill2d.vec.loop", F);
+                    auto* exitBB = llvm::BasicBlock::Create(ctx, "fill2d.vec.exit");
+                    builder->CreateBr(loopBB);
+
+                    builder->SetInsertPoint(loopBB);
+                    llvm::PHINode* phiI = builder->CreatePHI(i32, 2, "i");
+                    phiI->addIncoming(llvm::ConstantInt::get(i32, 0), preBB);
+                    // store VV em &rowBasePtr[ i*4 ]
+                    llvm::Value* iMul4 = builder->CreateMul(phiI, four);
+                    llvm::Value* vecDstPtr = builder->CreateInBoundsGEP(i32, rowBasePtr, iMul4);
+                    auto* st = builder->CreateStore(VV, vecDstPtr);
+                    // alinha conservadoramente em 4
+                    if (auto* stInst = llvm::dyn_cast<llvm::StoreInst>(st)) {
+                        stInst->setAlignment(llvm::Align(4));
+                    }
+                    // i++ e cond
+                    llvm::Value* i1 = builder->CreateAdd(phiI, llvm::ConstantInt::get(i32, 1));
+                    llvm::Value* cond = builder->CreateICmpSLT(i1, nVec);
+                    phiI->addIncoming(i1, builder->GetInsertBlock());
+                    builder->CreateCondBr(cond, loopBB, exitBB);
+
+                    F->insert(F->end(), exitBB);
+                    builder->SetInsertPoint(exitBB);
+                    // Vai para escalar/tail
+                    F->insert(F->end(), bbSca);
+                    builder->CreateBr(bbSca);
+
+                    // --- Tail escalar (0..tail-1) ---
+                    builder->SetInsertPoint(bbSca);
+                    llvm::Value* hasTail = builder->CreateICmpSGT(nTail, llvm::ConstantInt::get(i32, 0));
+                    auto* bbTail = llvm::BasicBlock::Create(ctx, "fill2d.tail", F);
+                    auto* bbDone = llvm::BasicBlock::Create(ctx, "fill2d.after.line", F);
+                    builder->CreateCondBr(hasTail, bbTail, bbDone);
+
+                    builder->SetInsertPoint(bbTail);
+                    llvm::PHINode* j = builder->CreatePHI(i32, 2, "j");
+                    j->addIncoming(llvm::ConstantInt::get(i32, 0), bbSca);
+                    llvm::Value* tPtr = builder->CreateInBoundsGEP(i32, tailBase, j);
+                    builder->CreateStore(value, tPtr);
+                    llvm::Value* j1 = builder->CreateAdd(j, llvm::ConstantInt::get(i32, 1));
+                    llvm::Value* jt = builder->CreateICmpSLT(j1, nTail);
+                    j->addIncoming(j1, builder->GetInsertBlock());
+                    builder->CreateCondBr(jt, bbTail, bbDone);
+
+                    builder->SetInsertPoint(bbDone);
+                    builder->CreateBr(rInc);
+                } else {
+                    // fallback: laço escalar por coluna
+                    auto* cCond = llvm::BasicBlock::Create(ctx, "fill2d.c.cond", F);
+                    auto* cBody = llvm::BasicBlock::Create(ctx, "fill2d.c.body");
+                    auto* cInc  = llvm::BasicBlock::Create(ctx, "fill2d.c.inc");
+                    llvm::AllocaInst* cVar = createEntryAlloca(F, i32, "c");
+                    builder->CreateStore(llvm::ConstantInt::get(i32, 0), cVar);
+                    builder->CreateBr(cCond);
+
+                    builder->SetInsertPoint(cCond);
+                    llvm::Value* cVal = builder->CreateLoad(i32, cVar, "c.val");
+                    llvm::Value* cCmp = builder->CreateICmpSLT(cVal, cols);
+                    builder->CreateCondBr(cCmp, cBody, rInc);
+
+                    F->insert(F->end(), cBody);
+                    builder->SetInsertPoint(cBody);
+                    llvm::Value* off  = builder->CreateAdd(dstLineOff, cVal);
+                    llvm::Value* dstPtr = gepElem(dstS, off, "fill2d.dst.ptr");
+                    builder->CreateStore(value, dstPtr);
+
+                    builder->CreateBr(cInc);
+                    F->insert(F->end(), cInc);
+                    builder->SetInsertPoint(cInc);
+                    llvm::Value* cNext = builder->CreateAdd(cVal, llvm::ConstantInt::get(i32, 1));
+                    builder->CreateStore(cNext, cVar);
+                    builder->CreateBr(cCond);
+                }
             }
 
             F->insert(F->end(), rInc);
