@@ -11,6 +11,12 @@ echo
 # Garante binário
 if [[ ! -x "$BIN" ]]; then
   echo "🔧 Buildando projeto..."
+  if command -v llvm-config >/dev/null 2>&1; then export LLVM_DIR="$(llvm-config --cmakedir)"; fi
+  if [[ -z "${LLVM_DIR:-}" ]]; then
+    for p in /opt/homebrew/opt/llvm/lib/cmake/llvm /usr/local/opt/llvm/lib/cmake/llvm; do
+      [[ -d "$p" ]] && export LLVM_DIR="$p" && break
+    done
+  fi
   cmake -S "$ROOT" -B "$ROOT/build" -G Ninja ${LLVM_DIR:+-DLLVM_DIR="$LLVM_DIR"}
   cmake --build "$ROOT/build" --config Release
   echo
@@ -47,4 +53,3 @@ should_fail_grep "$INV/05_return_type_mismatch_err.my"  "retorno sem valor"
 
 echo "Resumo A3-invalidos: pass=$PASS fail=$FAIL"
 [[ "$FAIL" -eq 0 ]]
-

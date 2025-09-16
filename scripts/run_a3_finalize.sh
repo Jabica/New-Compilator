@@ -54,9 +54,9 @@ mycc_cli --help
 MD
   ok "docs/guia.md mínimo criado"
 fi
+if [[ -f "$ROOT/docs/A3.md" ]]; then cp "$ROOT/docs/A3.md" "$PKG/docs/"; fi
 [[ -d "$ROOT/examples" ]] && cp -a "$ROOT/examples/." "$PKG/examples/" || warn "examples/ ausente"
 [[ -d "$ROOT/examples_invalid" ]] && cp -a "$ROOT/examples_invalid/." "$PKG/examples_invalid/" || warn "examples_invalid/ ausente"
 [[ -d "$ROOT/goldens" ]] && cp -a "$ROOT/goldens/." "$PKG/goldens/" || true
 mkdir -p "$DIST"; tar -C "$DIST" -czf "$DIST/mycc-pt-a3.tar.gz" "mycc-pt-a3"; ok "Pacote: $DIST/mycc-pt-a3.tar.gz"
 bold "Fim ✔"
-

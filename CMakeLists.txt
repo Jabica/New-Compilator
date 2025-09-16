@@ -95,4 +95,4 @@ install(DIRECTORY examples_invalid/ DESTINATION share/mycc-pt/examples_invalid F
 install(DIRECTORY scripts/ DESTINATION share/mycc-pt/scripts FILES_MATCHING PATTERN "run_a3_*.sh")
 
 # Instala documentação
-install(FILES docs/guia.md DESTINATION share/mycc-pt)
+install(FILES docs/guia.md docs/A3.md DESTINATION share/mycc-pt)
