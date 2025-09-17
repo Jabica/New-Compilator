@@ -9,6 +9,21 @@ Um compilador didático que implementa uma linguagem pequena (tipos inteiros, l�
 Versão do CLI:
 - `./build/mycc_cli --version` → exibe algo como `mycc-pt v0.1.0 (R2-A3)`
 
+## Novidades da A3
+
+- CLI: `--version` implementado e help atualizado.
+- Otimizações 2D:
+  - `--fast2d`: copy2d com fast‑path contíguo (1× `llvm.memcpy` quando possível).
+  - `--vec2d`: fill2d(value!=0) vetorizado em `<4 x i32>`; tail escalar.
+  - `--unroll2d`: fallback escalar desenrolado ×8 para fill2d.
+- Robustez de controle de fluxo: terminadores garantidos, merges consistentes e `--verify-ir` (R2‑21).
+- Folding e pesos de branch: `if(const)`/`while(false)` e `MD_prof` em `condbr` (R2‑22).
+- Suporte a `break/continue` (PT‑BR: `quebra/continua`) em `enquanto`.
+- Suite A3: 5 exemplos válidos e 5 inválidos + scripts (`run_a3_demo.sh`, `run_a3_invalids.sh`, `run_a3_all.sh`, `run_a3_finalize.sh`).
+- Instalação opcional com `cmake --install` (bin/scripts/examples/docs em `share/mycc-pt/`).
+
+Leitura complementar: `docs/A3.md` (conceito/arquitetura/otimizações/roteiro).
+
 ## Visão Geral
 
 - Front-end completo: léxico, parser, AST e checagens semânticas (escopos, tipos, retorno, arrays, conversões válidas, etc.).
