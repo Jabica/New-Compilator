@@ -24,6 +24,33 @@ Versão do CLI:
 
 Leitura complementar: `docs/A3.md` (conceito/arquitetura/otimizações/roteiro).
 
+## Execução Fácil (Quickstart & Docker)
+
+- Quickstart (nativo):
+  ```bash
+  ./scripts/quickstart.sh
+  # faz build, roda A3 (válidos+inválidos) e gera pacote dist/
+  ```
+
+- Docker (sem dependências no host):
+  ```bash
+  # build da imagem
+  docker build -t mycc-pt .
+  # executa A3 all dentro do container com o repo montado
+  docker run --rm -it -v "$PWD":/work mycc-pt ./scripts/run_a3_all.sh
+  # ou simplesmente
+  ./scripts/run_in_docker.sh
+  ```
+
+- Makefile (atalhos):
+  ```bash
+  make build      # ./scripts/rebuild.sh
+  make a3         # ./scripts/run_a3_all.sh
+  make dist       # ./scripts/run_a3_finalize.sh
+  make docker     # ./scripts/run_in_docker.sh
+  make quickstart # ./scripts/quickstart.sh
+  ```
+
 ## Visão Geral
 
 - Front-end completo: léxico, parser, AST e checagens semânticas (escopos, tipos, retorno, arrays, conversões válidas, etc.).

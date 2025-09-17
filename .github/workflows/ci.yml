@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-17-dev clang-17 cmake ninja-build
+          echo "LLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm" >> $GITHUB_ENV
+          echo "CC=clang-17" >> $GITHUB_ENV
+          echo "CXX=clang++-17" >> $GITHUB_ENV
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install llvm cmake ninja
+          echo "LLVM_DIR=$(llvm-config --cmakedir)" >> $GITHUB_ENV
+      - name: Build (CMake)
+        run: |
+          cmake -S . -B build -G Ninja -DLLVM_DIR="$LLVM_DIR"
+          cmake --build build --config Release
+      - name: Run A3 All
+        run: |
+          ./scripts/run_a3_all.sh
+      - name: Finalize & Package
+        run: |
+          ./scripts/run_a3_finalize.sh || true
+      - name: Upload dist artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mycc-pt-a3-${{ matrix.os }}
+          path: |
+            dist/*.tar.gz
+            goldens/**
