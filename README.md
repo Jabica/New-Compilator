@@ -51,6 +51,8 @@ Leitura complementar: `docs/A3.md` (conceito/arquitetura/otimizações/roteiro).
   make quickstart # ./scripts/quickstart.sh
   ```
 
+Guia completo de Docker: veja `docs/docker.md`.
+
 ## Visão Geral
 
 - Front-end completo: léxico, parser, AST e checagens semânticas (escopos, tipos, retorno, arrays, conversões válidas, etc.).
