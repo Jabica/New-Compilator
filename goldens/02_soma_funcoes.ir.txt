@@ -1,0 +1,41 @@
+; ModuleID = 'mycc_module'
+source_filename = "mycc_module"
+
+declare void @printi(i32)
+
+declare void @printb(i1)
+
+declare void @prints(ptr)
+
+declare i32 @copy(ptr, ptr, i32)
+
+declare i32 @fill(ptr, i32, i32)
+
+define i32 @soma(i32 %a, i32 %b) {
+entry:
+  %b2 = alloca i32, align 4
+  %a1 = alloca i32, align 4
+  store i32 %a, ptr %a1, align 4
+  store i32 %b, ptr %b2, align 4
+  %a.val = load i32, ptr %a1, align 4
+  %b.val = load i32, ptr %b2, align 4
+  %addtmp = add i32 %a.val, %b.val
+  ret i32 %addtmp
+}
+
+define i32 @main() {
+entry:
+  %r = alloca i32, align 4
+  %y = alloca i32, align 4
+  %x = alloca i32, align 4
+  store i32 7, ptr %x, align 4
+  store i32 35, ptr %y, align 4
+  %x.val = load i32, ptr %x, align 4
+  %y.val = load i32, ptr %y, align 4
+  %soma.call = call i32 @soma(i32 %x.val, i32 %y.val)
+  store i32 %soma.call, ptr %r, align 4
+  %r.val = load i32, ptr %r, align 4
+  call void @printi(i32 %r.val)
+  %r.val1 = load i32, ptr %r, align 4
+  ret i32 %r.val1
+}

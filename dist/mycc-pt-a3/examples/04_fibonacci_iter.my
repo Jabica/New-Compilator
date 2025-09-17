@@ -1,0 +1,17 @@
+funcao fib(n: inteiro): inteiro {
+  se (n <= 1) { retorna n; }
+  variavel a: inteiro = 0;
+  variavel b: inteiro = 1;
+  variavel i: inteiro = 2;
+  enquanto (i <= n) {
+    variavel t: inteiro = a + b;
+    a = b; b = t; i = i + 1;
+  }
+  retorna b;
+}
+funcao main(): inteiro {
+  variavel r: inteiro = fib(10); // 55
+  printi(r);
+  retorna r;
+}
+

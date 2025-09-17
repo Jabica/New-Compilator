@@ -1,0 +1,5 @@
+funcao f(a: inteiro, b: inteiro): inteiro { retorna a + b; }
+funcao principal(): inteiro {
+    retorna f(1); // faltou 1 argumento
+}
+

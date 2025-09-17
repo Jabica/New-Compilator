@@ -1,0 +1,25 @@
+Program
+  FuncDecl soma(a: inteiro, b: inteiro): inteiro
+    Block
+      Return
+        Binary(+)
+          VarRef(a)
+          VarRef(b)
+  FuncDecl main(): inteiro
+    Block
+      VarDecl x: inteiro
+        init:
+          IntLit(7)
+      VarDecl y: inteiro
+        init:
+          IntLit(35)
+      VarDecl r: inteiro
+        init:
+          Call soma
+            VarRef(x)
+            VarRef(y)
+      ExprStmt
+        Call printi
+          VarRef(r)
+      Return
+        VarRef(r)

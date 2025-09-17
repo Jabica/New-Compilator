@@ -1,0 +1,5 @@
+funcao principal(): inteiro {
+    quebra;
+    retorna 0;
+}
+
