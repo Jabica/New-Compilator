@@ -23,17 +23,21 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 PASS=0; FAIL=0
+TMP_BASE="$HOME/.cache/mycc-pt/run_a3_demo"
+mkdir -p "$TMP_BASE"
+trap 'rm -rf "$TMP_BASE"' EXIT
 
 run_case() {
   local file="$1"; local expect="$2"
   echo "— $file"
-  local exe="/tmp/$(basename "$file" .my)_a3_demo"
-  "$BIN" --emit-exe -o "$exe" "$file" >/dev/null 2>&1 || true
+  local exe="$TMP_BASE/$(basename "$file" .my)_a3_demo"
+  TMPDIR="$TMP_BASE" "$BIN" --emit-exe -o "$exe" "$file" >/dev/null 2>&1 || true
   if [[ ! -x "$exe" ]]; then
     echo "   ❌ FAIL (nao gerou executavel)"; FAIL=$((FAIL+1)); echo; return
   fi
   local out; out=$("$exe" 2>&1 || true)
-  if echo "$out" | grep -q "^$expect$"; then
+  local out_clean; out_clean=$(printf '%s' "$out" | tr '\n' ' ' | sed -e "s/[[:space:]]\+$//")
+  if [[ "$out_clean" == "$expect" ]]; then
     echo "   ✅ OK (stdout='$expect')"; PASS=$((PASS+1))
   else
     echo "   ❌ FAIL (stdout esperado='$expect')"
@@ -48,6 +52,8 @@ run_case "$EX/02_soma_funcoes.my"   "42"
 run_case "$EX/03_fatorial_iter.my"  "120"
 run_case "$EX/04_fibonacci_iter.my" "55"
 run_case "$EX/05_io_soma.my"        "42"
+run_case "$EX/06_texto_formatado.my" "Relatorio: resultado da soma 3 + 4 =  7  (obrigado por usar o mycc-pt)"
+run_case "$EX/07_dialogo.my"         "Pergunta: 7 * 6. Resposta:  42 . Parabens!"
 
 echo "Resumo A3: pass=$PASS fail=$FAIL"
 [[ $FAIL -eq 0 ]]

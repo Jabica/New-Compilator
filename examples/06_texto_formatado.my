@@ -1,0 +1,8 @@
+// Demonstra interações com texto e números em uma única linha
+funcao main(): inteiro {
+  variavel total: inteiro = 3 + 4;
+  prints("Relatorio: resultado da soma 3 + 4 = ");
+  printi(total);
+  prints(" (obrigado por usar o mycc-pt)\n");
+  retorna 0;
+}

@@ -1,0 +1,42 @@
+Slide 1 — Panorama
+- mycc-pt: compilador educacional em português, gera IR/obj/exe e executa via `lli`.
+- Arquitetura em camadas (CLI → Lexer/Parser/AST → Semântica → Codegen/Runtime).
+- Scripts automatizam build/testes e empacotamento para a entrega A3.
+
+Slide 2 — Entrada e Parsing
+- CLI (`src/cli.cpp` / `mycc_cli`) processa flags: `--check`, `--dump-ast`, `--dump-ir`, `--run`, `--emit-*`, `--opt`, `--target`.
+- Lexer (`src/lexer.cpp`) lê `.my`, reconhece tokens em português com linha/coluna.
+- Parser (`src/parser.cpp`) constrói a AST (`src/ast.hpp`) com nós para funções, variáveis, `se/enquanto/para`, expressões e intrínsecas 2D.
+
+Slide 3 — Semântica
+- `src/semantics.hpp` percorre a AST e monta tabelas de símbolos empilhadas (funções/variáveis/consts) com flag `isBoolLike`.
+- Regras garantidas: retorno em todos os caminhos, `quebra/continua` só dentro de laço, conversões implícitas restritas (inteiro↔lógico 0/1).
+- Checks adicionais: vetores 1D (tamanho fixo, índices inteiros), intrínsecas `copy2d/fill2d`, diagnósticos em português via `src/diagnostics.cpp`.
+
+Slide 4 — Codegen e Runtime
+- `src/codegen.cpp` gera LLVM IR SSA (`llvm::Module` + `IRBuilder`), com `--verify-ir` opcional.
+- Flags: `--fast2d`, `--vec2d`, `--unroll2d`, `--opt/-O*`, `--opt-pipeline`, `--print-pipeline`, `--target=<triple>`, `-g`, `--ubsan`, `--emit-ll|bc|asm|obj|exe`, `--run`.
+- Runtime (`src/runtime.c`) fornece `printi/printb/prints`; `--emit-exe` chama `clang` e linka `libmycc_runtime.a` via `MYCC_DEFAULT_RT_PATH`.
+
+Slide 5 — Scripts e Testes
+- Build rápido: `./scripts/rebuild.sh`.
+- Testes (~150 casos) com `./scripts/run_tests.sh`: MUST_PASS (funções, vetores, controle de fluxo, intrínsecas, múltiplos targets, emissões) e MUST_FAIL (conversões inválidas, `quebra` fora de laço, falta de retorno, vetores incorretos, contratos 2D quebrados).
+- Suite A3: `run_a3_demo`, `run_a3_invalids`, `run_a3_all`, `run_a3_finalize` + overview de erros educativos.
+- Automatização e portabilidade: `./scripts/quickstart.sh` (rebuild + A3 + pacote) e `./scripts/run_in_docker.sh`.
+
+Slide 6 — Possibilidades de Programação
+- Funções (recursivas ou não) com parâmetros por valor retornando `inteiro` ou `vazio`.
+- Controle `se/senao`, `enquanto`, `para` com `quebra/continua` → algoritmos iterativos e buscas.
+- Vetores 1D com inicialização literal → ordenações simples, contadores, flags booleanas.
+- Intrínsecas `copy2d`/`fill2d` para buffers 2D e exploração das flags `--fast2d/--vec2d/--unroll2d`.
+- IO básico (`printi`, `printb`, `prints`) e emissão multiplataforma (`.ll/.bc/.s/.o` ou executáveis).
+
+Slide 7 — Comandos de Demonstração
+```
+./build/mycc_cli --version   ;   ./build/mycc_cli --help
+./build/mycc_cli --dump-ast examples/03_fatorial_iter.my
+./build/mycc_cli --emit-ll --verify-ir -o fat.ll examples/03_fatorial_iter.my
+./scripts/run_a3_all.sh
+./scripts/run_tests.sh
+./scripts/quickstart.sh
+```

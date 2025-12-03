@@ -1,0 +1,73 @@
+Apresentacao breve - mycc-pt
+============================
+
+1) Contexto
+- Objetivo: construir um compilador educacional totalmente em portugues que recebe programas `.my`, verifica sintaxe/semantica e gera LLVM IR capaz de virar `.ll`, `.bc`, `.s`, `.o` ou executavel, alem de permitir execucao direta via `lli`.
+- Stack: nucleo em C++20 (todos os `src/*.cpp`), runtime de IO em C (`src/runtime.c`), build com CMake+Ninja e qualquer LLVM com `LLVMConfig.cmake`. O script oficial `./scripts/rebuild.sh` descobre `llvm-config`, limpa `build/` e recompila.
+- Principais artefatos: `build/mycc_cli` (CLI), `build/libmycc.a` (biblioteca core), `build/libmycc_runtime.a` (runtime linkado quando usamos `--emit-exe`). O README e o `docs/A3.md` sao os guias para instalacao, conceitos e roteiro da entrega.
+
+2) Fluxo das camadas
+- Lexer/Parser/AST (`src/lexer.cpp`, `src/parser.cpp`, `src/ast.hpp`):
+  * A analise lexica reconhece tokens com acentos opcionais (ex.: `verdadeiro`, `continua`) e mantem informacoes de linha/coluna para diagnosticos.
+  * O parser descende recursivo transforma os tokens em AST com nodos especificos para declaracoes (`DeclFuncao`, `DeclVariavel`), estruturas de controle (`Se`, `Enquanto`, `Para`) e intrinsecas (`Copy2D`, `Fill2D`). O arquivo `tests/sem_ok.my` e exemplos como `examples/03_fatorial_iter.my` cobrem essa sintaxe.
+- **Semantica (principal desafio)** — `src/semantics.hpp`:
+  * Tabelas de simbolos empilhadas: cada escopo abre um mapa (`std::vector<Scope>`) contendo funcoes, variaveis e constantes. Para booleanos, marcamos um flag `isBoolLike`, usado para permitir conversao implicita inteiro→logico apenas quando o valor e 0/1.
+  * Regras de retorno: funcoes com tipo diferente de `vazio` precisam garantir `retorna` em todos os caminhos. O verificador analisa grafos de controle dentro da AST, indicando exatamente onde falta retorno (mensagens de erro em portugues, ex.: "funcao 'fatorial' precisa retornar inteiro").
+  * `quebra`/`continua`: guardamos um contador de laços ativos; se chegar zero, emitimos erro. Isso cobre alias em portugues e evita usos fora de `enquanto`/`para`.
+  * Vetores 1D: conferimos tamanhos em tempo de compilacao (literal inteiro), indices obrigatoriamente inteiros e inicializacao com numero exato de elementos. Para globais const, exigimos listas literais para gerar dados estaticos no IR.
+  * Diagnosticos: toda mensagem inclui arquivo/linha/coluna e highlight textual, seguindo o padrao da nossa `diagnostics.cpp`. Foi essencial para guiar usuarios durante as demos.
+- Codegen (`src/codegen.cpp`):
+  * Gera IR SSA utilizando `llvm::IRBuilder` e `llvm::Module`. Cada funcao AST vira um `llvm::Function`, e loops traduzem para blocos `cond`, `body`, `exit` com `PHINode` para variaveis atualizadas. O modo `--dump-ir` exibe esse IR antes de otimizacoes.
+  * `--verify-ir` executa `llvm::verifyModule` para garantir terminadores e merges consistentes; isso evita blocos "soltos" e foi adicionado junto com as melhorias de fluxo (R2-21).
+  * Otimizacoes 2D:
+    - `--fast2d auto`: verifica se largura==stride e offsets sao contiguos; se sim, gera `llvm.memcpy` unico. Caso contrario, cai para copia por linha.
+    - `--vec2d`: cria vetor `<4 x i32>`, faz splat do valor e executa stores vetoriais com tail escalar seguro.
+    - `--unroll2d`: fallback escalar com unroll de fator 8, diminuindo branch mispredict quando nao ha vetorizaçao.
+  * Flags gerais: `-O0…-O3` (ou `--opt=O2`) passam string para `PassBuilder` do LLVM; `--opt-pipeline` aceita pipelines customizados; `--target` troca a triple (ex.: `aarch64-apple-darwin`); `-g` insere metadata DWARF; `--ubsan` injeta checagem de divisao por zero diretamente no IR.
+- CLI (`src/cli.cpp` + `src/main.cpp`):
+  * Consolida parsing de argumentos, escolhe o modo padrao (`--check`) e gerencia saídas (stdout, arquivos com `-o`, dumps, execucao via `lli` em `--run`).
+  * Para `--emit-exe`, escreve `.ll` temporario, chama `clang` com `-target`/`-L`/`-lmycc_runtime`, injeta `MYCC_DEFAULT_RT_PATH` (definido no CMake) e respeita `CMAKE_OSX_DEPLOYMENT_TARGET`.
+  * Exibe `--version` (incluindo tag R2-A3) e `--help` com todas as flags. O README descreve cada uma com exemplos.
+
+3) Testes e scripts chave
+- Arsenal de scripts em `./scripts/`:
+  * `run_tests.sh` roda MUST_PASS/MUST_FAIL (semantica, codegen, execucao) e smoke-tests de emissao/execucao.
+  * `run_opt_tests.sh` avalia combinacoes `--fast2d/--vec2d/--unroll2d` e compara com goldens em `goldens/`.
+  * `run_target_tests.sh` garante que `--target` gera objetos para pelo menos `aarch64-apple-darwin` e `x86_64-apple-darwin`.
+  * `run_bc_asm_tests.sh` e `run_debug_tests.sh` asseguram que `--emit-bc`, `--emit-asm` e `-g` produzem saidas validas (checadas via `llvm-dis`/`llvm-dwarfdump` quando disponiveis).
+  * `run_loc_tests.sh` verifica mensagens em portugues, garantindo padrao consistente.
+- Suite A3 (mais relevante para a apresentacao):
+  * Entradas validas `examples/01_hello.my` … `05_io_soma.my` cobrem funcoes, vetores, IO e laços; invalidas `examples_invalid/01_*` … `05_*` exercitam erros de tipo, escopo e controle.
+  * `run_a3_demo.sh` compila os validos com `--emit-exe`, liga o runtime e confere stdout; bom para mostrar que o pipeline completo funciona.
+  * `run_a3_invalids.sh` checa substrings de erro especificas (por exemplo, "nao ha retorno em todos os caminhos").
+  * `run_a3_all.sh` junta os dois relatórios e imprime resumo amigavel; `run_a3_finalize.sh` roda checklist final (build limpo, `--help`, `--version`, goldens, verifier) e empacota `dist/mycc-pt-a3.tar.gz`.
+- Quickstart: `./scripts/quickstart.sh` encadeia rebuild + suite A3 + pacote final. Se o usuario nao possui LLVM local, `./scripts/run_in_docker.sh` monta o container (Dockerfile instala LLVM 17, clang, ninja) e executa `run_a3_all.sh` la dentro.
+
+4) Linguagem, runtime e exemplos
+- Tipos primitivos: `inteiro`, `logico`, `texto` (string literal), `vazio`. Vetores 1D sao declarados como `inteiro[8]`. Todas as palavras-chave sao em portugues.
+- Controle de fluxo: `se/senao`, `enquanto`, `para (init; cond; passo)`, `quebra`, `continua`, `retorna`. O `para` e descompilado para init + loop `enquanto` com comparacoes e atualizacoes latentes.
+- Built-ins: `printi`, `printb`, `prints` residem em `src/runtime.c`. Quando rodamos `--run`, o IR chama funcoes importadas; quando linkamos executavel, `--emit-exe` inclui `libmycc_runtime.a`.
+- Intrinsecas especiais: `copy2d` e `fill2d` aceitam descricao de matriz 2D "simulada" (ponteiro + rows + cols + stride). Elas sao implementadas no codegen e controladas pelas flags 2D.
+- Exemplos notaveis:
+  * `examples/02_soma_funcoes.my`: mostra funcoes auxiliares e prints.
+  * `examples/03_fatorial_iter.my`: case classico para demonstrar AST/IR.
+  * `tests/sem_ok.my`: caso unitario para conversoes booleanas validas.
+  * `examples_invalid/03_break_fora_do_loop.my` (hipotetico): prova que `quebra` fora de loop dispara diagnostico de semantica.
+
+5) Estrutura do repositorio e distribuicao
+- Diretorios principais:
+  * `src/` (implementacao), `include/` (headers publicos como `include/mycc/version.hpp`), `tests/`, `examples/`, `examples_invalid/`, `goldens/`, `docs/`, `scripts/`.
+  * `build/` armazena artefatos gerados; `dist/` recebe o pacote final da A3.
+- `CMakeLists.txt` lista todos os `src/*.cpp`, configura padroes (C++20, C11, `CMAKE_OSX_DEPLOYMENT_TARGET=15.0`), chama `llvm_map_components_to_libnames` e instala binarios/scripts/docs com `cmake --install`.
+
+6) Roadmap e limitacoes
+- Limitacoes atuais: apenas vetores 1D, sem ponteiros/structs/strings dinamicas; `--asan` reservado; `--ubsan` cobre somente divisao por zero; linkagem depende do `clang` local.
+- Possiveis proximos passos (citados na documentacao): heuristicas melhores de pesos de branch, passes extras de otimizacao (ex.: DCE), biblioteca padrao minima (parse de inteiros), amplificar runtime.
+- Riscos tecnicos que ja mitigamos: detection de LLVM via `llvm-config`, controle de fluxo consistente garantido por `verifyModule`, mensagens localizadas via `diagnostics`.
+
+7) Demo sugerido (3-5 minutos)
+1. Rodar `./build/mycc_cli --version` e `--help` para contextualizar o CLI e citar dependencias (CMake, LLVM, clang, lli).
+2. Abrir `examples/03_fatorial_iter.my`, comentar a sintaxe em portugues e executar `./build/mycc_cli --dump-ast examples/03_fatorial_iter.my` para mostrar a arvore com tipos e onde a semantica atuou (ex.: `variavel resultado: inteiro`, laço `enquanto` com `continua` permitido).
+3. Destacar a parte dificil: explicar que `semantics.hpp` garante retornos, controla conversoes inteiro/logico, protege os vetores e valida `quebra/continua`. Mostrar rapidamente uma mensagem de erro intencional (ex.: remover um retorno ou colocar `quebra` fora do laço) para provar a checagem.
+4. Gerar e comentar o IR: `./build/mycc_cli --emit-ll --verify-ir -o fat.ll examples/03_fatorial_iter.my`. Apontar o `br`/`phi` e o uso de `ret i32`.
+5. Fechar com `./scripts/run_a3_all.sh` para exibir o resumo de validos/invalidos e mencionar o pacote final em `dist/`. Encerre citando limitacoes atuais (somente vetores 1D, sem strings dinamicas/pointers, `--asan` reservado) e proximos passos.

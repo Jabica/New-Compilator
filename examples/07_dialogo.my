@@ -1,0 +1,7 @@
+// Exemplo textual com pergunta e resposta em uma linha
+funcao main(): inteiro {
+  prints("Pergunta: 7 * 6. Resposta: ");
+  printi(7 * 6);
+  prints(". Parabens!\n");
+  retorna 0;
+}

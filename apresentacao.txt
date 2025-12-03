@@ -1,0 +1,37 @@
+Apresentacao do compilador mycc-pt
+=================================
+
+1) Resumo rapido
+- Compilador educacional em Portugues com front-end completo (lexer, parser, AST e checagens semanticas) e back-end em LLVM que gera LL/BC/ASM/OBJ/EXE ou executa via lli.
+- Projeto organizado em bibliotecas: `libmycc.a` contem toda a logica do compilador e `libmycc_runtime.a` oferece o runtime C usado pelos executaveis.
+- Binario principal: `build/mycc_cli` (versao 0.1). Executar `./build/mycc_cli --version` e `--help` mostra que o CLI controla todos os modos.
+
+2) Fluxo interno
+- `src/lexer.cpp`, `src/parser.cpp` e `src/ast.hpp` constroem a AST tipada a partir da linguagem (inteiro, logico, texto, vetores 1D, funcoes, controle de fluxo).
+- `src/semantics.hpp` valida escopos, tipos, retorno, uso de vetores, conversoes permitidas e comandos `quebra/continua`.
+- `src/codegen.cpp` traduz AST para LLVM IR, respeitando flags `--opt`, `--verify-ir` e heuristicas 2D (`--fast2d`, `--vec2d`, `--unroll2d`) que aplicam memcpy unico, stores vetoriais ou unroll escalar quando seguro.
+- `src/cli.cpp` interpreta os argumentos: `--check` (padrao), `--parse-only`, `--dump-ast`, `--dump-ir`, `--run`, `--emit-{ll,bc,asm,obj,exe}`, `--emit-ll-opt`, configuracoes de alvo (`--target`), debug (`-g`) e sanitizacao (`--ubsan`). `src/main.cpp` apenas chama `mycc::cli::run`.
+- `src/runtime.c` implementa os built-ins (`printi`, `printb`, `prints`) e eh linkado quando usamos `--emit-exe` (via clang externo com caminho default embedado no binario).
+
+3) Configuracao e build
+- `CMakeLists.txt` exige CMake >=3.16, Ninja, LLVM com `LLVMConfig.cmake`, Clang para `--emit-exe`; define C e C++ em 11/20 e fixa `CMAKE_OSX_DEPLOYMENT_TARGET=15.0` para alinhar com LLVM do macOS.
+- `find_package(LLVM CONFIG REQUIRED)` localiza a instalacao e linka componentes `core`, `support`, `codegen`, `asmprinter`, `native`, etc. O configure imprime a versao detectada.
+- `scripts/rebuild.sh` limpa `build/`, roda `cmake -G Ninja -DLLVM_DIR=$(llvm-config --cmakedir)` e compila. A variavel `LLVM_CONFIG` (padrao `/opt/homebrew/opt/llvm/bin/llvm-config`) pode ser ajustada para outras versoes.
+- Instalacao opcional: `cmake --install build` publica o binario em `bin/` e exemplos/scripts/docs em `share/mycc-pt/`.
+
+4) Testes, exemplos e suite da A3
+- Testes genericos: `./scripts/run_tests.sh` (pass/fail + smokes). Smokes especificos: `run_opt_tests.sh`, `run_target_tests.sh`, `run_bc_asm_tests.sh`, `run_debug_tests.sh`, `run_loc_tests.sh`.
+- Suite A3: cinco exemplos validos (`examples/01_hello.my` ... `05_io_soma.my`) e cinco invalidos (`examples_invalid/01_*.my` ... `05_*.my`). Scripts:
+  * `run_a3_demo.sh` - compila validos com `--emit-exe` e confere stdout.
+  * `run_a3_invalids.sh` - valida mensagens de erro esperadas.
+  * `run_a3_all.sh` - executa ambos e resume resultados.
+  * `run_a3_finalize.sh` - checklist final, `--version`, `--help`, goldens, verificador e pacote `dist/mycc-pt-a3.tar.gz`.
+- Quickstart: `./scripts/quickstart.sh` faz rebuild, roda A3 (validos+invalidos) e produz pacote `dist/`.
+- Docker: `docker build -t mycc-pt .` seguido de `docker run --rm -it -v "$PWD":/work mycc-pt ./scripts/run_a3_all.sh` para rodar tudo dentro do container (atalho: `./scripts/run_in_docker.sh`).
+
+5) Roteiro sugerido para apresentacao
+1. Mostrar `./build/mycc_cli --version` e `--help` para contextualizar.
+2. Rodar `./scripts/run_a3_all.sh` e comentar como os validos geram exe/saida certa e os invalidos confirmam as mensagens semanticas.
+3. Pegar `examples/02_soma_funcoes.my` ou `examples/03_fatorial_iter.my`, demonstrar `--dump-ast` e `--dump-ir` (opcionalmente `--emit-ll`).
+4. Destacar as flags de desempenho (`--fast2d`, `--vec2d`, `--unroll2d`), `--verify-ir` e `--target`/`--emit-exe`.
+5. Encerrar citando limitacoes (somente vetores 1D, sem ponteiros/strings dinamicas, `--asan` pendente, link via clang do sistema) e mostrando o pacote `dist/mycc-pt-a3.tar.gz`.

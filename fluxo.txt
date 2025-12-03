@@ -1,0 +1,48 @@
+Fluxo de execucao do mycc-pt
+============================
+
+1) Entrada e parsing
+- O CLI (`src/cli.cpp`, binario `mycc_cli`) processa argumentos e define o modo: `--check` (padrao), `--dump-ast`, `--dump-ir`, `--run`, `--emit-ll|bc|asm|obj|exe`, `--emit-ll-opt`, `--opt=*`, `--target`, etc.
+- O lexer (`src/lexer.cpp`) transforma o texto `.my` em tokens com linha/coluna e palavras-chave em portugues (`funcao`, `enquanto`, `verdadeiro`...).
+- O parser (`src/parser.cpp`) consome tokens usando um descendente recursivo e monta a AST descrita em `src/ast.hpp` (nos para funcoes, variaveis, `se/enquanto/para`, expressoes e intrinsecas 2D).
+
+2) Semantica (validacoes principais)
+- `src/semantics.hpp` percorre a AST e:
+  * Monta tabelas de simbolos empilhadas (funcoes, variaveis, consts) com flags `isBoolLike`.
+  * Garante que funcoes nao-vazias retornam em todos os caminhos e que `quebra/continua` so aparecam em laços.
+  * Limita conversoes implicitas (inteiro↔logico somente quando garantidamente 0/1).
+  * Checa indices/tamanhos de vetores 1D, inicializacoes e intrinsecas `copy2d/fill2d`.
+  * Emite diagnosticos ricos (arquivo/linha/coluna + highlight) via `src/diagnostics.cpp`.
+
+3) Codegen e runtime
+- `src/codegen.cpp` traduz a AST validada para LLVM IR SSA (`llvm::Module` + `IRBuilder`), garantindo terminadores e merges consistentes (com `--verify-ir` opcional).
+- Flags e alvos: `--fast2d`, `--vec2d`, `--unroll2d`, `--opt`, `--opt-pipeline`, `--print-pipeline`, `--target=<triple>`, `-g`, `--ubsan`; `--emit-ll|bc|asm|obj|exe` e `--run` (executa via `lli`).
+- O runtime C (`src/runtime.c`) contem `printi/printb/prints`; `--emit-exe` invoca `clang` e linka `libmycc_runtime.a` usando o caminho embedado `MYCC_DEFAULT_RT_PATH`.
+
+4) Scripts e testes
+- Build rapido: `./scripts/rebuild.sh` (limpa `build/`, roda CMake+Ninja usando `llvm-config`).
+- Testes completos (~150 casos entre MUST_PASS/MUST_FAIL + smokes): `./scripts/run_tests.sh`.
+- Cobertura dos testes manuais:
+  * MUST_PASS: funcoes simples, vetores 1D, controle de fluxo completo, intrinsecas `copy2d/fill2d`, targets diferentes (`aarch64`, `x86_64`), emissao de `.ll/.bc/.s/.o`, `--run` com `lli`, `--emit-exe`.
+  * MUST_FAIL: erros semanticos planejados (conversao inteiro→logico invalida, `quebra` fora de laço, falta de retorno, re-declaracoes, alocacao de vetor com tamanho invalido, `copy2d/fill2d` fora do contrato).
+- Overview rapido: validamos compilacoes inteiras (parse→codegen→execucao) e tambem garantimos que erros educativos apareçam com mensagens em portugues, cobrindo tanto comportamento correto quanto protecoes contra uso indevido.
+- Suite A3 (validos+invalidos + checklist final): `./scripts/run_a3_demo.sh`, `./scripts/run_a3_invalids.sh`, `./scripts/run_a3_all.sh`, `./scripts/run_a3_finalize.sh`.
+- Pipeline automatizado: `./scripts/quickstart.sh` (rebuild + A3 + pacote em `dist/`). Ambiente isolado: `./scripts/run_in_docker.sh` (usa Dockerfile com LLVM 17 e executa `run_a3_all.sh`).
+
+5) Possibilidades de programacao
+- Programas com funcoes (recursivas ou nao) retornando `inteiro` ou `vazio`, com parametros por valor.
+- Controle de fluxo completo: `se/senao`, `enquanto`, `para` com `quebra` e `continua`, permitindo loops complexos (ex.: algoritmos de busca, acumuladores).
+- Vetores 1D com tamanho estatico, inicializacao literal e indexacao: viavel para bubblesort, contadores, armazenar flags booleanas.
+- Intrinsecas `copy2d` e `fill2d` para manipulacoes de matrizes simuladas (buffers 2D contiguos), explorando as flags `--fast2d/--vec2d/--unroll2d`.
+- IO basico com `printi`, `printb`, `prints`, permitindo montar mini demos interativas (com constantes) e validar saidas via scripts.
+- Emissao multiplataforma: gerar `.ll/.bc/.s/.o` para estudar IR, ou `--emit-exe`/`--run` para experimentar e medir desempenho com `--opt`, `--verify-ir`, `--target`.
+
+5) Comandos de demonstracao
+```
+./build/mycc_cli --version   ;   ./build/mycc_cli --help
+./build/mycc_cli --dump-ast examples/03_fatorial_iter.my
+./build/mycc_cli --emit-ll --verify-ir -o fat.ll examples/03_fatorial_iter.my
+./scripts/run_a3_all.sh
+./scripts/run_tests.sh     # roda todos os ~150 testes (must_pass/must_fail/smokes)
+./scripts/quickstart.sh    # opcional: rebuild + suite A3 + pacote dist/
+```
